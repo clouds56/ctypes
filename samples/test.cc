@@ -4,7 +4,10 @@
 using namespace ctypes;
 
 int test_packedfunc() {
-  static PackedFunc &packedfunc_hello = Registry<PackedFunc>::Register("hello");
+  static auto &packedfunc_hello = Registry<PackedFunc>::Register("hello")
+    ->set_body([](PackedFunc::PackedArgs args, PackedFunc::PackedRetValue *rv) {
+      *rv = PackedFunc::PackedRetValue();
+    });
   std::cout << "PackedFunc::ListNames: ";
   for (auto i : Registry<PackedFunc>::ListNames()) {
     std::cout << i << ", ";

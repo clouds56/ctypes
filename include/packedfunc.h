@@ -1,14 +1,18 @@
 #pragma once
 #include <functional>
+#include <utility>
 #include "registry.h"
 
 namespace ctypes {
 
-struct PackedFunc : public Registry<PackedFunc> {
+struct PackedFunc {
   struct PackedArgs;
   struct PackedRetValue;
   static const std::string RegistryName;
   using FType = std::function<void (PackedArgs args, PackedRetValue* rv)>;
+
+  PackedFunc() = default;
+  explicit PackedFunc(FType body) : body_(std::move(body)) { }
 
   FType body_;
 
@@ -49,7 +53,7 @@ struct PackedFunc : public Registry<PackedFunc> {
     PackedRetValue() : PackedArg(PackedArg::kUnknown, PackedArg::Value{.v_voidp = nullptr}) {}
   };
 
-  PackedRetValue call(PackedArgs &args) {
+  PackedRetValue call(const PackedArgs &args) {
     PackedRetValue rv;
     return rv;
   }
@@ -60,10 +64,25 @@ struct PackedFunc : public Registry<PackedFunc> {
     *ret_type = rv.type_code;
     *ret_val = rv.value;
   }
+};
 
-  Registry<PackedFunc>& set_body(FType body) {
-    body_ = std::move(body);
-    return *this;
+template<>
+struct _Registry<PackedFunc> : public _Registry_Base<PackedFunc> {
+public:
+  using Type = PackedFunc;
+  using typename _Registry_Base<Type>::RegistryType;
+protected:
+  Type content_;
+  _Registry() = default;
+public:
+  RegistryType& set_body(PackedFunc::FType content) {
+    content_ = PackedFunc(std::move(content));
+    // TODO: dynamic_cast is not that safe here?
+    return *dynamic_cast<RegistryType*>(this);
+  }
+
+  PackedFunc* get() override {
+    return &content_;
   }
 };
 

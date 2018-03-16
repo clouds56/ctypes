@@ -1,4 +1,4 @@
-#include "test.cc"
+int test();
 
 int main() {
   return test();

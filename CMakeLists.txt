@@ -6,5 +6,5 @@ file(GLOB sources src/*.cc include/*.h)
 add_library(ctypes STATIC ${sources})
 target_include_directories(ctypes PUBLIC include)
 
-add_executable(main samples/main.cc)
+add_executable(main samples/main.cc samples/test.cc)
 target_link_libraries(main ctypes)

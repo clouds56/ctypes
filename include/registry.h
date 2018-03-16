@@ -52,6 +52,10 @@ private:
   std::string name_;
 
 public:
+  static const std::string RegistryName_;
+  static std::string RegistryName() {
+    return "Registry<" + RegistryName_ + ">";
+  }
   using Type = T;
   static Registry& Register(const std::string &name) {
     Manager* m = Manager::Global();
@@ -63,7 +67,7 @@ public:
       m->fmap[name] = r;
       return *r;
     } else {
-      FATAL() << "Global registry " << name << " is already registered in " << Type::RegistryName;
+      FATAL() << "Global registry " << name << " is already registered in " << RegistryName_;
       return *it->second;
     }
   }

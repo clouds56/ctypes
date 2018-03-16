@@ -33,7 +33,6 @@ struct PackedArg {
 struct PackedFunc {
   struct Args;
   struct RetValue;
-  static const std::string RegistryName;
   using FType = std::function<void (Args args, RetValue* rv)>;
 
   PackedFunc() = default;
@@ -239,5 +238,8 @@ public:
     return &content_;
   }
 };
+
+template <>
+const std::string Registry<PackedFunc>::RegistryName_ = "PackedFunc";
 
 }

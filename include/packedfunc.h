@@ -6,13 +6,16 @@
 
 namespace ctypes {
 
+struct PackedFunc;
+
 namespace PackedTypeCode {
 enum PackedType_ {
   kUnknown = 0,
   kInt64 = 1,
   kFloat64 = 2,
   kPtr = 3,
-  kStr = 4
+  kStr = 4,
+  kFunc = 5,
 };
 }
 
@@ -23,6 +26,7 @@ union PackedValue {
   double v_float64;
   void* v_voidp;
   const char* v_str;
+  const PackedFunc* v_func;
 };
 
 struct PackedArg {
@@ -72,6 +76,9 @@ struct PackedFunc {
     static Arg from(const char* value) {
       return {PackedTypeCode::kStr, PackedValue{.v_str = value}};
     }
+    static Arg from(const PackedFunc& value) {
+      return {PackedTypeCode::kFunc, PackedValue{.v_func = &value}};
+    }
 
     operator int64_t() {
       CHECK_EQ(type_code(), PackedTypeCode::kInt64);
@@ -98,6 +105,11 @@ struct PackedFunc {
     operator std::string() {
       CHECK_EQ(type_code(), PackedTypeCode::kStr);
       return value().v_str;
+    }
+
+    operator PackedFunc() {
+      CHECK_EQ(type_code(), PackedTypeCode::kFunc);
+      return *value().v_func;
     }
   };
 
@@ -131,8 +143,9 @@ struct PackedFunc {
     static std::unique_ptr<void, Manager> make(const char* str, int len=-1) {
       return std::unique_ptr<void, Manager>(new std::string(str, len), Manager(deleter_for<std::string>()));
     };
-    static std::unique_ptr<void, Manager> make(const std::string& str) {
-      return std::unique_ptr<void, Manager>(new std::string(str), Manager(deleter_for<std::string>()));
+    template <typename T>
+    static std::unique_ptr<void, Manager> make(const T& v) {
+      return std::unique_ptr<void, Manager>(new T(v), Manager(deleter_for<T>()));
     };
     static std::unique_ptr<void, Manager> make(nullptr_t) {
       return std::unique_ptr<void, Manager>(nullptr, Manager(deleter_for<nullptr_t>()));
@@ -149,7 +162,7 @@ struct PackedFunc {
         p(Manager::make(nullptr)) {}
 
 
-    RetValue& swtich_to(PackedType type_code, PackedValue value, bool managed=false) {
+    RetValue& switch_to(PackedType type_code, PackedValue value, bool managed=false) {
       if (!managed) {
         p = Manager::make(nullptr);
       }
@@ -163,24 +176,24 @@ struct PackedFunc {
             std::is_integral<T>::value>::type>
     RetValue& reset(T value) {
       // TODO: check numeric_limits
-      return swtich_to(PackedTypeCode::kInt64, PackedValue{.v_int64 = value});
+      return switch_to(PackedTypeCode::kInt64, PackedValue{.v_int64 = value});
     }
     RetValue& reset(int64_t value) {
-      return swtich_to(PackedTypeCode::kInt64, PackedValue{.v_int64 = value});
+      return switch_to(PackedTypeCode::kInt64, PackedValue{.v_int64 = value});
     }
     RetValue& reset(uint64_t value) {
       CHECK_LE(value, static_cast<uint64_t>(std::numeric_limits<int>::max()));
-      return swtich_to(PackedTypeCode::kInt64, PackedValue{.v_int64 = static_cast<int64_t>(value)});
+      return switch_to(PackedTypeCode::kInt64, PackedValue{.v_int64 = static_cast<int64_t>(value)});
     }
     RetValue& reset(double value) {
-      return swtich_to(PackedTypeCode::kFloat64, PackedValue{.v_float64 = value});
+      return switch_to(PackedTypeCode::kFloat64, PackedValue{.v_float64 = value});
     }
     RetValue& reset(const char* value, bool copy=true) {
       if (copy) {
         p = Manager::make(value);
         value = reinterpret_cast<std::string*>(p.get())->c_str();
       }
-      return swtich_to(PackedTypeCode::kStr, PackedValue{.v_str = value}, copy);
+      return switch_to(PackedTypeCode::kStr, PackedValue{.v_str = value}, copy);
     }
     RetValue& reset(const std::string& value, bool copy=true) {
       const char* value_ = value.c_str();
@@ -188,11 +201,19 @@ struct PackedFunc {
         p = Manager::make(value);
         value_ = reinterpret_cast<std::string*>(p.get())->c_str();
       }
-      return swtich_to(PackedTypeCode::kStr, PackedValue{.v_str = value_}, copy);
+      return switch_to(PackedTypeCode::kStr, PackedValue{.v_str = value_}, copy);
+    }
+    RetValue& reset(const PackedFunc& value, bool copy=true) {
+      const PackedFunc* value_ = &value;
+      if (copy) {
+        p = Manager::make(value);
+        value_ = reinterpret_cast<PackedFunc*>(p.get());
+      }
+      return switch_to(PackedTypeCode::kFunc, PackedValue{.v_func = value_}, copy);
     }
     RetValue& reset(RetValue&& other) {
       p = std::move(other.p);
-      return swtich_to(other.content_.type_code, other.content_.value);
+      return switch_to(other.content_.type_code, other.content_.value);
     }
   };
 

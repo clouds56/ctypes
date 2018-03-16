@@ -7,6 +7,9 @@
 namespace ctypes {
 
 struct PackedFunc;
+struct PackedVector;
+
+using PackedType = unsigned;
 
 namespace PackedTypeCode {
 enum PackedType_ {
@@ -16,10 +19,65 @@ enum PackedType_ {
   kPtr = 3,
   kStr = 4,
   kFunc = 5,
+  kVector = 6,
 };
-}
 
-using PackedType = unsigned;
+template <typename T, typename Enabled = void>
+struct TypeCode {
+  static constexpr PackedType code = kUnknown;
+  static constexpr PackedType transform_code = kUnknown;
+};
+
+template <typename T>
+struct TypeCode<T, typename std::enable_if_t<
+    std::is_integral<T>::value>> {
+  static constexpr PackedType code = kUnknown;
+  static constexpr PackedType transform_code = kInt64;
+};
+
+template <>
+struct TypeCode<int64_t> {
+  static constexpr PackedType code = kInt64;
+  static constexpr PackedType transform_code = kInt64;
+};
+
+template <>
+struct TypeCode<uint64_t> {
+  static constexpr PackedType code = kInt64;
+  static constexpr PackedType transform_code = kInt64;
+};
+
+template <>
+struct TypeCode<double> {
+  static constexpr PackedType code = kFloat64;
+  static constexpr PackedType transform_code = kFloat64;
+};
+
+template <>
+struct TypeCode<const char*> {
+  static constexpr PackedType code = kStr;
+  static constexpr PackedType transform_code = kStr;
+};
+
+template <>
+struct TypeCode<std::string> {
+  static constexpr PackedType code = kUnknown;
+  static constexpr PackedType transform_code = kStr;
+};
+
+template <>
+struct TypeCode<PackedFunc> {
+  static PackedType const code = kFunc;
+  static const PackedType transform_code = kFunc;
+};
+
+template <typename T>
+struct TypeCode<std::vector<T>> {
+  static constexpr PackedType code = kVector;
+  static constexpr PackedType transform_code = kVector;
+};
+
+}
 
 union PackedValue {
   int64_t v_int64;
@@ -27,11 +85,40 @@ union PackedValue {
   void* v_voidp;
   const char* v_str;
   const PackedFunc* v_func;
+  const PackedVector* v_vec;
 };
 
 struct PackedArg {
   PackedType type_code;
   PackedValue value;
+};
+
+struct PackedVector {
+  PackedValue* data;
+  size_t size;
+  PackedType type_code;
+};
+
+struct PackedManagedVector {
+  using ManagedType = std::vector<PackedValue>;
+  PackedVector content{};
+  ManagedType* ptr;
+  PackedManagedVector(const PackedManagedVector&) = delete;
+  PackedManagedVector(PackedManagedVector&& other) noexcept : content(other.content), ptr(other.ptr) {
+    other.ptr = nullptr;
+  }
+  PackedManagedVector(PackedType type_code, ManagedType* ptr) : ptr(ptr) {
+    content.size = ptr->size();
+    content.data = ptr->data();
+    content.type_code = type_code;
+  }
+
+  ~PackedManagedVector() {
+    delete ptr;
+  }
+
+  template <typename T>
+  static PackedManagedVector create(const std::vector<T>& vec);
 };
 
 struct PackedFunc {
@@ -79,6 +166,21 @@ struct PackedFunc {
     static Arg from(const PackedFunc& value) {
       return {PackedTypeCode::kFunc, PackedValue{.v_func = &value}};
     }
+    static Arg from(const PackedVector& value) {
+      return {PackedTypeCode::kVector, PackedValue{.v_vec = &value}};
+    }
+    static Arg from(const PackedManagedVector& value) {
+      return {PackedTypeCode::kVector, PackedValue{.v_vec = &value.content}};
+    }
+
+    template<typename T,
+        typename = typename std::enable_if<
+            std::is_integral<T>::value>::type>
+    operator T() {
+      // TODO: check numeric_limits
+      CHECK_EQ(type_code(), PackedTypeCode::kInt64);
+      return value().v_int64;
+    }
 
     operator int64_t() {
       CHECK_EQ(type_code(), PackedTypeCode::kInt64);
@@ -94,7 +196,7 @@ struct PackedFunc {
     operator int() {
       CHECK_EQ(type_code(), PackedTypeCode::kInt64);
       CHECK_LE(value().v_int64, std::numeric_limits<int>::max());
-      return value().v_int64;
+      return static_cast<int>(value().v_int64);
     }
 
     operator double() {
@@ -111,6 +213,23 @@ struct PackedFunc {
       CHECK_EQ(type_code(), PackedTypeCode::kFunc);
       return *value().v_func;
     }
+
+    operator PackedVector() {
+      CHECK_EQ(type_code(), PackedTypeCode::kVector);
+      return *value().v_vec;
+    }
+
+    template <typename T>
+    operator std::vector<T>() {
+      CHECK_EQ(type_code(), PackedTypeCode::kVector);
+      std::vector<T> r;
+      CHECK_EQ(value().v_vec->type_code, PackedTypeCode::TypeCode<T>::transform_code);
+      r.reserve(value().v_vec->size);
+      for (size_t i = 0; i < value().v_vec->size; i++) {
+        r.push_back(Arg(value().v_vec->type_code, value().v_vec->data[i]).operator T());
+      }
+      return r;
+    };
   };
 
   struct Args {
@@ -149,6 +268,9 @@ struct PackedFunc {
     };
     static std::unique_ptr<void, Manager> make(nullptr_t) {
       return std::unique_ptr<void, Manager>(nullptr, Manager(deleter_for<nullptr_t>()));
+    };
+    static std::unique_ptr<void, Manager> make(PackedManagedVector vec) {
+      return std::unique_ptr<void, Manager>(new PackedManagedVector(std::move(vec)), Manager(deleter_for<PackedManagedVector>()));
     };
     Deleter deleter;
   };
@@ -211,6 +333,17 @@ struct PackedFunc {
       }
       return switch_to(PackedTypeCode::kFunc, PackedValue{.v_func = value_}, copy);
     }
+    template <typename T>
+    RetValue& reset(const std::vector<T>& value) {
+      const bool copy = true;
+      static_assert(copy);
+      const PackedVector* value_ = nullptr;
+      if (copy) {
+        p = Manager::make(PackedManagedVector::create(value));
+        value_ = &reinterpret_cast<PackedManagedVector*>(p.get())->content;
+      }
+      return switch_to(PackedTypeCode::kVector, PackedValue{.v_vec = value_}, copy);
+    }
     RetValue& reset(RetValue&& other) {
       p = std::move(other.p);
       return switch_to(other.content_.type_code, other.content_.value);
@@ -239,6 +372,17 @@ struct PackedFunc {
     *ret_val = rv.value();
   }
 };
+
+template <typename T>
+PackedManagedVector PackedManagedVector::create(const std::vector<T>& vec) {
+  static_assert(PackedTypeCode::TypeCode<T>::transform_code != PackedTypeCode::kUnknown);
+  auto ptr = std::make_unique<ManagedType>();
+  ptr->reserve(vec.size());
+  std::transform(vec.begin(), vec.end(), std::back_inserter(*ptr), [](auto&& i) {
+    return PackedFunc::Arg::from(i).value();
+  });
+  return PackedManagedVector(PackedTypeCode::TypeCode<T>::transform_code, ptr.release());
+}
 
 template<>
 struct _Registry<PackedFunc> : public _Registry_Base<PackedFunc> {

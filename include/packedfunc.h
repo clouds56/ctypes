@@ -101,13 +101,16 @@ struct PackedVector {
 
 struct PackedManagedVector {
   using ManagedType = std::vector<PackedValue>;
+  using ManagedNestedType = std::vector<PackedManagedVector>;
   PackedVector content{};
-  ManagedType* ptr;
+  ManagedType* ptr = nullptr;
+  ManagedNestedType* nested_ptr = nullptr;
   PackedManagedVector(const PackedManagedVector&) = delete;
-  PackedManagedVector(PackedManagedVector&& other) noexcept : content(other.content), ptr(other.ptr) {
+  PackedManagedVector(PackedManagedVector&& other) noexcept : content(other.content), ptr(other.ptr), nested_ptr(other.nested_ptr) {
     other.ptr = nullptr;
+    other.nested_ptr = nullptr;
   }
-  PackedManagedVector(PackedType type_code, ManagedType* ptr) : ptr(ptr) {
+  PackedManagedVector(PackedType type_code, ManagedType* ptr, ManagedNestedType* nested_ptr=nullptr) : ptr(ptr), nested_ptr(nested_ptr) {
     content.size = ptr->size();
     content.data = ptr->data();
     content.type_code = type_code;
@@ -115,10 +118,38 @@ struct PackedManagedVector {
 
   ~PackedManagedVector() {
     delete ptr;
+    delete nested_ptr;
   }
 
   template <typename T>
-  static PackedManagedVector create(const std::vector<T>& vec);
+  static PackedManagedVector create(const std::vector<T>& vec) {
+    const PackedType type_code = PackedTypeCode::TypeCode<T>::transform_code;
+    static_assert(type_code != PackedTypeCode::kUnknown);
+    static_assert(type_code != PackedTypeCode::kVector);
+    auto ptr = std::make_unique<ManagedType>();
+    ptr->reserve(vec.size());
+    std::transform(vec.begin(), vec.end(), std::back_inserter(*ptr), [](auto&& i){ return transform(i); });
+    return PackedManagedVector(type_code, ptr.release());
+  }
+
+  template <typename T>
+  static PackedManagedVector create(const std::vector<std::vector<T>>& vec) {
+    const PackedType type_code = PackedTypeCode::TypeCode<std::vector<T>>::transform_code;
+    static_assert(type_code == PackedTypeCode::kVector);
+    auto ptr = std::make_unique<ManagedType>();
+    auto nested_ptr = std::make_unique<ManagedNestedType>();;
+    ptr->reserve(vec.size());
+    nested_ptr->reserve(vec.size());
+    for (const auto &i : vec) {
+      nested_ptr->push_back(create(i));
+      ptr->push_back(transform(nested_ptr->back().content));
+    }
+    return PackedManagedVector(type_code, ptr.release(), nested_ptr.release());
+  }
+  template <typename T>
+  static PackedValue transform(T&& i);
+//  template <typename T>
+//  static PackedValue transform(const std::vector<T>& i);
 };
 
 struct PackedFunc {
@@ -127,7 +158,7 @@ struct PackedFunc {
   using FType = std::function<void (Args args, RetValue* rv)>;
 
   PackedFunc() = default;
-  explicit PackedFunc(FType body) : body_(std::move(body)) { }
+  explicit PackedFunc(FType body) : body_(body) { }
 
   FType body_;
 
@@ -374,14 +405,8 @@ struct PackedFunc {
 };
 
 template <typename T>
-PackedManagedVector PackedManagedVector::create(const std::vector<T>& vec) {
-  static_assert(PackedTypeCode::TypeCode<T>::transform_code != PackedTypeCode::kUnknown);
-  auto ptr = std::make_unique<ManagedType>();
-  ptr->reserve(vec.size());
-  std::transform(vec.begin(), vec.end(), std::back_inserter(*ptr), [](auto&& i) {
-    return PackedFunc::Arg::from(i).value();
-  });
-  return PackedManagedVector(PackedTypeCode::TypeCode<T>::transform_code, ptr.release());
+PackedValue PackedManagedVector::transform(T&& i) {
+  return PackedFunc::Arg::from(i).value();
 }
 
 template<>

@@ -10,7 +10,7 @@ int test_packedfunc() {
         rv->reset(([](int a, int b) -> int { return a+b; }) (args[0], args[1]));
       });
   std::cout << Registry<PackedFunc>::RegistryName() << "::ListNames: ";
-  for (auto i : Registry<PackedFunc>::ListNames()) {
+  for (const auto& i : Registry<PackedFunc>::ListNames()) {
     std::cout << i << ", ";
   }
   std::cout << std::endl;
@@ -45,12 +45,21 @@ int test_func() {
 int test_vector() {
   static auto &packedfunc_hello = Registry<PackedFunc>::Register("vector_add")
       .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
-        rv->reset(([](std::vector<int> a, int b) -> std::vector<int> { for(auto& i: a){i += b;}; return a; }) (args[0], args[1]));
+        rv->reset(([](std::vector<std::vector<int>> a, std::vector<int> b) -> std::vector<std::vector<int>> {
+          int t = std::accumulate(b.begin(), b.end(), 0);
+          for(auto& x: a) for(auto& i: x){i += t;}; return a;
+        }) (args[0], args[1]));
       });
-  std::vector<int> hello_result = Registry<PackedFunc>::Get("vector_add")->operator()(PackedManagedVector::create(std::vector<int>{1, 2, 3}), -1);
-  std::cout << "test_append_str: [";
-  for (auto i : hello_result) {
-    std::cout << i << ",";
+  std::vector<std::vector<int>> hello_result = Registry<PackedFunc>::Get("vector_add")->operator()(
+      PackedManagedVector::create(std::vector<std::vector<int>>{{1, 2, 3}, {4}}),
+      PackedManagedVector::create(std::vector<int>{1,2,3,4}));
+  std::cout << "vector_add: [";
+  for (const auto& x : hello_result) {
+    std::cout << "[";
+    for (auto i : x) {
+      std::cout << i << ",";
+    }
+    std::cout << "], ";
   }
   std::cout << "]" << std::endl;
 

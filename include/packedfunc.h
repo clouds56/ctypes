@@ -1,4 +1,5 @@
 #pragma once
+
 #include <functional>
 #include <utility>
 #include <memory>
@@ -67,8 +68,8 @@ struct TypeCode<std::string> {
 
 template <>
 struct TypeCode<PackedFunc> {
-  static PackedType const code = kFunc;
-  static const PackedType transform_code = kFunc;
+  static constexpr PackedType code = kFunc;
+  static constexpr PackedType transform_code = kFunc;
 };
 
 template <typename T>

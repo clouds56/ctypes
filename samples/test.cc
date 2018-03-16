@@ -66,11 +66,40 @@ int test_vector() {
   return 0;
 }
 
+int test_all() {
+  static auto &packedfunc_hello = Registry<PackedFunc>::Register("test_all")
+      .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
+        rv->reset(([](std::vector<PackedFunc> ts) -> std::vector<int> {
+          std::vector<int> r;
+          std::transform(ts.begin(), ts.end(), std::back_inserter(r), [](auto f) {
+            return f();
+          });
+          return r;
+        }) (args[0]));
+      });
+  std::vector<std::function<int()>> ts = { test_packedfunc, test_str, test_func, test_vector };
+  std::vector<PackedFunc> packed_ts;
+  std::transform(ts.begin(), ts.end(), std::back_inserter(packed_ts), [](auto f) -> PackedFunc{
+    return PackedFunc{[f](PackedFunc::Args, PackedFunc::RetValue *rv) {
+      rv->reset(f());
+    }};
+  });
+  std::vector<int> hello_result = Registry<PackedFunc>::Get("test_all")->operator()(
+      PackedManagedVector::create(packed_ts));
+  std::cout << "test_all: [";
+  for (auto i : hello_result) {
+    std::cout << i << ",";
+  }
+  std::cout << "]" << std::endl;
+
+  return 0;
+}
+
 int test() {
   using TestFunc = std::function<int()>;
   //auto not_compiled = _Registry<PackedFunc>();
   // Note: static variable in function would not be initialized until called.
-  std::vector<TestFunc> ts = { test_packedfunc, test_str, test_func, test_vector };
+  std::vector<TestFunc> ts = { test_all };
   return std::accumulate(ts.begin(), ts.end(), 0, [](int cur, auto f) {
     return cur + f();
   });

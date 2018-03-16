@@ -1,6 +1,7 @@
 #pragma once
 #include <functional>
 #include <utility>
+#include <memory>
 #include "registry.h"
 
 namespace ctypes {
@@ -17,13 +18,13 @@ struct PackedFunc {
   FType body_;
 
   struct PackedArg {
-    unsigned type_code;
+  public:
     union Value {
       int64_t v_int64;
       double v_float64;
       void* v_voidp;
       const char* v_str;
-    } value;
+    };
     enum TypeCode {
       kUnknown = 0,
       kInt64 = 1,
@@ -32,7 +33,15 @@ struct PackedFunc {
       kStr = 4,
     };
 
-    PackedArg(unsigned type_code, Value value) : type_code(type_code), value(value) {}
+  protected:
+    unsigned type_code_;
+    Value value_;
+
+  public:
+    PackedArg(unsigned type_code, Value value) : type_code_(type_code), value_(value) {}
+
+    unsigned type_code() const { return type_code_; }
+    Value value() const { return value_; }
 
     struct Setter {
       template<typename T,
@@ -61,30 +70,30 @@ struct PackedFunc {
     };
 
     operator int64_t() {
-      CHECK_EQ(type_code, kInt64);
-      return value.v_int64;
+      CHECK_EQ(type_code_, kInt64);
+      return value_.v_int64;
     }
 
     operator uint64_t() {
-      CHECK_EQ(type_code, kInt64);
-      CHECK_LE(static_cast<uint64_t>(value.v_int64), static_cast<uint64_t>(std::numeric_limits<int>::max()));
-      return static_cast<uint64_t>(value.v_int64);
+      CHECK_EQ(type_code_, kInt64);
+      CHECK_LE(static_cast<uint64_t>(value_.v_int64), static_cast<uint64_t>(std::numeric_limits<int>::max()));
+      return static_cast<uint64_t>(value_.v_int64);
     }
 
     operator int() {
-      CHECK_EQ(type_code, kInt64);
-      CHECK_LE(value.v_int64, std::numeric_limits<int>::max());
-      return value.v_int64;
+      CHECK_EQ(type_code_, kInt64);
+      CHECK_LE(value_.v_int64, std::numeric_limits<int>::max());
+      return value_.v_int64;
     }
 
     operator double() {
-      CHECK_EQ(type_code, kFloat64);
-      return value.v_float64;
+      CHECK_EQ(type_code_, kFloat64);
+      return value_.v_float64;
     }
 
     operator std::string() {
-      CHECK_EQ(type_code, kStr);
-      return value.v_str;
+      CHECK_EQ(type_code_, kStr);
+      return value_.v_str;
     }
   };
 
@@ -107,14 +116,82 @@ struct PackedFunc {
     }
   };
 
-  struct PackedRetValue : PackedArg {
-    PackedRetValue() : PackedArg(PackedArg::kUnknown, PackedArg::Value{.v_voidp = nullptr}) {}
+  struct PackedManager {
+    using Deleter = std::function<void(void*)>;
+    explicit PackedManager(Deleter deleter) : deleter(std::move(deleter)) { }
+    template <typename T>
+    void operator ()(T* p) {
+      deleter(static_cast<void*>(p));
+    }
+    template <typename T>
+    static Deleter deleter_for() {
+      return [](void*p){ return std::default_delete<T>()(reinterpret_cast<T*>(p)); };
+    }
+    static std::unique_ptr<void, PackedManager> make(const char* str, int len=-1) {
+      return std::unique_ptr<void, PackedManager>(new std::string(str, len), PackedManager(deleter_for<std::string>()));
+    };
+    static std::unique_ptr<void, PackedManager> make(const std::string& str) {
+      return std::unique_ptr<void, PackedManager>(new std::string(str), PackedManager(deleter_for<std::string>()));
+    };
+    static std::unique_ptr<void, PackedManager> make(nullptr_t) {
+      return std::unique_ptr<void, PackedManager>(nullptr, PackedManager(deleter_for<nullptr_t>()));
+    };
+    Deleter deleter;
+  };
+
+  struct PackedRetValue : public PackedArg {
+    PackedRetValue() :
+        PackedArg(PackedArg::kUnknown, PackedArg::Value{.v_voidp = nullptr}),
+        p(PackedManager::make(nullptr)) {}
+
+    template<typename T,
+        typename = typename std::enable_if<
+            std::is_integral<T>::value>::type>
+    PackedRetValue& reset(T value) {
+      // TODO: check numeric_limits
+      type_code_ = kInt64;
+      value_.v_int64 = value;
+      return *this;
+    }
+    PackedRetValue& reset(int64_t value) {
+      type_code_ = kInt64;
+      value_.v_int64 = value;
+      return *this;
+    }
+    PackedRetValue& reset(uint64_t value) {
+      CHECK_LE(value, static_cast<uint64_t>(std::numeric_limits<int>::max()));
+      type_code_ = kInt64;
+      value_.v_int64 = static_cast<uint64_t>(value);
+      return *this;
+    }
+    PackedRetValue& reset(double value) {
+      type_code_ = kFloat64;
+      value_.v_float64 = value;
+      return *this;
+    }
+    PackedRetValue& reset(const char* value, bool copy=true) {
+      type_code_ = kStr;
+      if (copy) {
+        p = PackedManager::make(value);
+      }
+      value_.v_str = reinterpret_cast<std::string*>(p.get())->c_str();
+      return *this;
+    }
+    PackedRetValue& reset(const std::string& value, bool copy=true) {
+      type_code_ = kStr;
+      if (copy) {
+        p = PackedManager::make(value);
+      }
+      value_.v_str = reinterpret_cast<std::string*>(p.get())->c_str();
+      return *this;
+    }
+    std::unique_ptr<void, PackedManager> p;
   };
 
   PackedRetValue call_packed(const PackedArgs &args) const {
     PackedRetValue rv;
     body_(args, &rv);
-    return rv;
+    return std::move(rv);
   }
 
   template <typename... Args>
@@ -126,9 +203,10 @@ struct PackedFunc {
 
   static void FuncCall(const void* handle, unsigned* type_codes, PackedArg::Value* values, int num_args, PackedArg::Value* ret_val, unsigned* ret_type) {
     PackedArgs args(num_args, type_codes, values);
-    PackedRetValue rv = reinterpret_cast<const PackedFunc*>(handle)->call_packed(args);
-    *ret_type = rv.type_code;
-    *ret_val = rv.value;
+    // TODO: better memory manager
+    static thread_local PackedRetValue rv = reinterpret_cast<const PackedFunc*>(handle)->call_packed(args);
+    *ret_type = rv.type_code();
+    *ret_val = rv.value();
   }
 };
 

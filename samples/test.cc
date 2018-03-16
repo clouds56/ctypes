@@ -5,7 +5,7 @@ using namespace ctypes;
 
 int test_packedfunc() {
   static auto &packedfunc_hello = Registry<PackedFunc>::Register("hello")
-    .set_body([](PackedFunc::PackedArgs args, PackedFunc::PackedRetValue *rv) {
+    .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
       rv->reset(([](int a, int b) -> int { return a+b; }) (args[0], args[1]));
     });
   std::cout << "PackedFunc::ListNames: ";
@@ -21,7 +21,7 @@ int test_packedfunc() {
 
 int test_str() {
   static auto &packedfunc_hello = Registry<PackedFunc>::Register("append_str")
-      .set_body([](PackedFunc::PackedArgs args, PackedFunc::PackedRetValue *rv) {
+      .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
         rv->reset(([](std::string a, std::string b) -> std::string { return a+" "+b; }) (args[0], args[1]));
       });
   std::string hello_result = Registry<PackedFunc>::Get("append_str")->operator()("hello", "world");

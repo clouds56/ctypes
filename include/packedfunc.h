@@ -23,60 +23,28 @@ enum PackedType_ {
   kVector = 6,
 };
 
+#define _constexpr constexpr
+
+template <unsigned _code, unsigned _transform_code=_code>
+struct _TypeCode {
+  static constexpr PackedType code() { return _code; }
+  static constexpr PackedType transform_code() { return _transform_code; }
+};
+
 template <typename T, typename Enabled = void>
-struct TypeCode {
-  static constexpr PackedType code = kUnknown;
-  static constexpr PackedType transform_code = kUnknown;
-};
+struct TypeCode : _TypeCode<kUnknown> { };
 
 template <typename T>
-struct TypeCode<T, typename std::enable_if_t<
-    std::is_integral<T>::value>> {
-  static constexpr PackedType code = kUnknown;
-  static constexpr PackedType transform_code = kInt64;
-};
+struct TypeCode<T, typename std::enable_if_t<std::is_integral<T>::value>>
+    : _TypeCode<kUnknown, kInt64> { };
 
-template <>
-struct TypeCode<int64_t> {
-  static constexpr PackedType code = kInt64;
-  static constexpr PackedType transform_code = kInt64;
-};
-
-template <>
-struct TypeCode<uint64_t> {
-  static constexpr PackedType code = kInt64;
-  static constexpr PackedType transform_code = kInt64;
-};
-
-template <>
-struct TypeCode<double> {
-  static constexpr PackedType code = kFloat64;
-  static constexpr PackedType transform_code = kFloat64;
-};
-
-template <>
-struct TypeCode<const char*> {
-  static constexpr PackedType code = kStr;
-  static constexpr PackedType transform_code = kStr;
-};
-
-template <>
-struct TypeCode<std::string> {
-  static constexpr PackedType code = kUnknown;
-  static constexpr PackedType transform_code = kStr;
-};
-
-template <>
-struct TypeCode<PackedFunc> {
-  static constexpr PackedType code = kFunc;
-  static constexpr PackedType transform_code = kFunc;
-};
-
-template <typename T>
-struct TypeCode<std::vector<T>> {
-  static constexpr PackedType code = kVector;
-  static constexpr PackedType transform_code = kVector;
-};
+template <> struct TypeCode<int64_t> : _TypeCode<kInt64> { };
+template <> struct TypeCode<uint64_t> : _TypeCode<kInt64> { };
+template <> struct TypeCode<double> : _TypeCode<kFloat64> { };
+template <> struct TypeCode<const char*> : _TypeCode<kStr> { };
+template <> struct TypeCode<std::string> : _TypeCode<kUnknown, kStr> { };
+template <> struct TypeCode<PackedFunc> : _TypeCode<kFunc, kFunc> { };
+template <typename T> struct TypeCode<std::vector<T>> : _TypeCode<kVector, kVector> { };
 
 }
 
@@ -124,7 +92,7 @@ struct PackedManagedVector {
 
   template <typename T>
   static PackedManagedVector create(const std::vector<T>& vec) {
-    const PackedType type_code = PackedTypeCode::TypeCode<T>::transform_code;
+    const PackedType type_code = PackedTypeCode::TypeCode<T>::transform_code();
     static_assert(type_code != PackedTypeCode::kUnknown);
     static_assert(type_code != PackedTypeCode::kVector);
     auto ptr = std::make_unique<ManagedType>();
@@ -135,7 +103,7 @@ struct PackedManagedVector {
 
   template <typename T>
   static PackedManagedVector create(const std::vector<std::vector<T>>& vec) {
-    const PackedType type_code = PackedTypeCode::TypeCode<std::vector<T>>::transform_code;
+    const PackedType type_code = PackedTypeCode::TypeCode<std::vector<T>>::transform_code();
     static_assert(type_code == PackedTypeCode::kVector);
     auto ptr = std::make_unique<ManagedType>();
     auto nested_ptr = std::make_unique<ManagedNestedType>();;
@@ -255,7 +223,7 @@ struct PackedFunc {
     operator std::vector<T>() {
       CHECK_EQ(type_code(), PackedTypeCode::kVector);
       std::vector<T> r;
-      CHECK_EQ(value().v_vec->type_code, PackedTypeCode::TypeCode<T>::transform_code);
+      CHECK_EQ(value().v_vec->type_code, PackedTypeCode::TypeCode<T>::transform_code());
       r.reserve(value().v_vec->size);
       for (size_t i = 0; i < value().v_vec->size; i++) {
         r.push_back(Arg(value().v_vec->type_code, value().v_vec->data[i]).operator T());
@@ -298,8 +266,8 @@ struct PackedFunc {
     static std::unique_ptr<void, Manager> make(const T& v) {
       return std::unique_ptr<void, Manager>(new T(v), Manager(deleter_for<T>()));
     };
-    static std::unique_ptr<void, Manager> make(nullptr_t) {
-      return std::unique_ptr<void, Manager>(nullptr, Manager(deleter_for<nullptr_t>()));
+    static std::unique_ptr<void, Manager> make(std::nullptr_t) {
+      return std::unique_ptr<void, Manager>(nullptr, Manager(deleter_for<std::nullptr_t>()));
     };
     static std::unique_ptr<void, Manager> make(PackedManagedVector vec) {
       return std::unique_ptr<void, Manager>(new PackedManagedVector(std::move(vec)), Manager(deleter_for<PackedManagedVector>()));

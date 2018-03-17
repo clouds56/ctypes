@@ -31,7 +31,7 @@ struct PackedFunc {
     packedvalue_handle value;
     template <typename T>
     operator T() {
-      return ctypes::PackedFunc::Arg(type_code, *reinterpret_cast<ctypes::PackedValue*>(&value)).operator T();
+      return ctypes::PackedFunc::Arg(type_code, *reinterpret_cast<PackedValue*>(&value)).operator T();
     }
   };
 
@@ -80,6 +80,25 @@ static int test_func() {
   return 0;
 }
 
+static int test_all() {
+  auto f = client::Get("PackedFunc", "test_all");
+  std::vector<std::function<int()>> ts = { test_packed, test_func };
+  std::vector<PackedFunc> packed_ts;
+  std::transform(ts.begin(), ts.end(), std::back_inserter(packed_ts), [](auto f) -> PackedFunc{
+    return PackedFunc{[f](PackedFunc::Args, PackedFunc::RetValue *rv) {
+      rv->reset(f());
+    }};
+  });
+  std::vector<int> hello_result = f(PackedManagedVector::create(packed_ts));
+  std::cout << "test_all: [";
+  for (auto i : hello_result) {
+    std::cout << i << ",";
+  }
+  std::cout << "]" << std::endl;
+
+  return 0;
+}
+
 int test_c() {
-  return test_packed() || test_func();
+  return test_all();
 }

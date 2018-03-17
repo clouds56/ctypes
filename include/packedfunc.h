@@ -395,7 +395,7 @@ struct PackedFunc {
     }
     RetValue& reset(RetValue&& other) {
       p = std::move(other.p);
-      return switch_to(other.content_.type_code, other.content_.value);
+      return switch_to(other.content_.type_code, other.content_.value, p!=nullptr);
     }
   };
 

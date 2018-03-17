@@ -256,7 +256,7 @@ struct PackedFunc {
 
   struct Args {
     Args(const std::vector<Arg>& args) : args(args) { }
-    Args(int num_args, PackedType* type_codes, PackedValue* values) {
+    Args(int num_args, const PackedType* type_codes, const PackedValue* values) {
       for (int i = 0; i < num_args; i++) {
         args.emplace_back(type_codes[i], values[i]);
       }
@@ -412,7 +412,7 @@ struct PackedFunc {
     return call_packed(Args(packed_args));
   }
 
-  static void FuncCall(const void* handle, PackedType* type_codes, PackedValue* values, int num_args, PackedValue* ret_val, PackedType* ret_type) {
+  static void FuncCall(const void* handle, int num_args, const PackedType* type_codes, const PackedValue* values, PackedType* ret_type, PackedValue* ret_val) {
     Args args(num_args, type_codes, values);
     // TODO: better memory manager
     static thread_local RetValue rv;

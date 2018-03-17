@@ -23,7 +23,14 @@ enum PackedType_ {
   kVector = 6,
 };
 
-#define _constexpr constexpr
+enum PackedExtType_ {
+  kExtStart = 32,
+};
+
+template <unsigned _code>
+struct is_ext {
+  static constexpr bool value = _code >= kExtStart;
+};
 
 template <unsigned _code, unsigned _transform_code=_code>
 struct _TypeCode {
@@ -45,6 +52,9 @@ template <> struct TypeCode<const char*> : _TypeCode<kStr> { };
 template <> struct TypeCode<std::string> : _TypeCode<kUnknown, kStr> { };
 template <> struct TypeCode<PackedFunc> : _TypeCode<kFunc, kFunc> { };
 template <typename T> struct TypeCode<std::vector<T>> : _TypeCode<kVector, kVector> { };
+
+template <typename T>
+struct is_ext_type : is_ext<TypeCode<T>::code()> {};
 
 }
 
@@ -172,6 +182,11 @@ struct PackedFunc {
     static Arg from(const PackedManagedVector& value) {
       return {PackedTypeCode::kVector, PackedValue{.v_vec = &value.content}};
     }
+    template <typename T, unsigned _type_code = PackedTypeCode::TypeCode<T>::code(), typename = std::enable_if_t<PackedTypeCode::is_ext<_type_code>::value> >
+    static Arg from(const T* value) {
+      static_assert(PackedTypeCode::TypeCode<T>::transform_code() == PackedTypeCode::kPtr);
+      return {_type_code, PackedValue{.v_voidp = const_cast<T*>(value)}};
+    }
 
     template<typename T,
         typename = typename std::enable_if<
@@ -230,6 +245,13 @@ struct PackedFunc {
       }
       return r;
     };
+
+    template <typename T, unsigned _type_code = PackedTypeCode::TypeCode<T>::code(), typename = std::enable_if_t<PackedTypeCode::is_ext<_type_code>::value> >
+    operator T*() {
+      static_assert(PackedTypeCode::TypeCode<T>::transform_code() == PackedTypeCode::kPtr);
+      CHECK_EQ(type_code(), _type_code);
+      return reinterpret_cast<T*>(value().v_voidp);
+    }
   };
 
   struct Args {
@@ -249,22 +271,41 @@ struct PackedFunc {
 
   struct Manager {
     using PtrType = std::unique_ptr<void, Manager>;
+    using Copy = std::function<void*(const void*)>;
     using Deleter = std::function<void(void*)>;
     explicit Manager(Deleter deleter) : deleter(std::move(deleter)) { }
     template <typename T>
     void operator ()(T* p) {
       deleter(static_cast<void*>(p));
     }
+
     template <typename T>
-    static Deleter deleter_for() {
+    inline static Deleter deleter_for() {
       return [](void*p){ return std::default_delete<T>()(reinterpret_cast<T*>(p)); };
     }
+    template <typename T>
+    inline static Copy copy_for() {
+      return [](const void*p) { return new T(*reinterpret_cast<const T*>(p)); };
+    }
+
     static std::unique_ptr<void, Manager> make(const char* str, int len=-1) {
       return std::unique_ptr<void, Manager>(new std::string(str, len), Manager(deleter_for<std::string>()));
     };
     template <typename T>
-    static std::unique_ptr<void, Manager> make(const T& v) {
-      return std::unique_ptr<void, Manager>(new T(v), Manager(deleter_for<T>()));
+    static std::unique_ptr<void, Manager> make(const T& v, Deleter deleter = deleter_for<T>()) {
+      return std::unique_ptr<void, Manager>(new T(v), Manager(deleter));
+    };
+    template <typename T>
+    static std::unique_ptr<void, Manager> make(const T* v, Deleter deleter = deleter_for<T>()) {
+      return std::unique_ptr<void, Manager>(new T(*v), Manager(deleter));
+    };
+    template <typename T>
+    static std::unique_ptr<void, Manager> make(const T& v, Copy copy, Deleter deleter = deleter_for<T>()) {
+      return std::unique_ptr<void, Manager>(copy(&v), Manager(deleter));
+    };
+    template <typename T>
+    static std::unique_ptr<void, Manager> make(const T* v, Copy copy, Deleter deleter = deleter_for<T>()) {
+      return std::unique_ptr<void, Manager>(copy(v), Manager(deleter));
     };
     static std::unique_ptr<void, Manager> make(std::nullptr_t) {
       return std::unique_ptr<void, Manager>(nullptr, Manager(deleter_for<std::nullptr_t>()));
@@ -334,7 +375,7 @@ struct PackedFunc {
       return switch_to(PackedTypeCode::kFunc, PackedValue{.v_func = value_}, copy);
     }
     template <typename T>
-    RetValue& reset(const std::vector<T>& value) {
+    RetValue& reset(const std::vector<T>& value, bool copy_=true) {
       const bool copy = true;
       static_assert(copy);
       const PackedVector* value_ = nullptr;
@@ -343,6 +384,14 @@ struct PackedFunc {
         value_ = &reinterpret_cast<PackedManagedVector*>(p.get())->content;
       }
       return switch_to(PackedTypeCode::kVector, PackedValue{.v_vec = value_}, copy);
+    }
+    template <typename T, unsigned _type_code = PackedTypeCode::TypeCode<T>::code(), typename = std::enable_if_t<PackedTypeCode::is_ext<_type_code>::value> >
+    RetValue& reset(const T* value, bool copy=true) {
+      if (copy) {
+        p = Manager::make(value);
+        value = reinterpret_cast<T*>(p.get());
+      }
+      return switch_to(_type_code, PackedValue{.v_voidp = const_cast<T*>(value)}, copy);
     }
     RetValue& reset(RetValue&& other) {
       p = std::move(other.p);

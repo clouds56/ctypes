@@ -447,7 +447,6 @@ public:
   }
 };
 
-template <>
-const std::string Registry<PackedFunc>::RegistryName_ = "PackedFunc";
+template <> const std::string Registry<PackedFunc>::RegistryName_;
 
 }

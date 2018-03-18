@@ -1,9 +1,7 @@
 try:
-    from .base import ExtBaseCls, PackedArg, classproperty
-    from .test_ctypes import lib
+    from .test_ctypes import lib, ExtBaseCls, PackedArg, classproperty
 except:
-    from base import ExtBaseCls, PackedArg, classproperty
-    from test_ctypes import lib
+    from test_ctypes import lib, ExtBaseCls, PackedArg, classproperty
 
 
 class ExtTest(ExtBaseCls):

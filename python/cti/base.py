@@ -104,6 +104,9 @@ class ExtBaseCls:
     def __del__(self):
         self.release()
 
+    def __repr__(self):
+        return "<%s 0x%x>" % (self.ext_name, self.handle)
+
 
 class PackedArg:
     """

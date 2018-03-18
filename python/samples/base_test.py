@@ -1,9 +1,12 @@
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 try:
-    from .test_ctypes import lib
     from .ext import ExtTest
+    from .test_ctypes import lib
 except:
-    from test_ctypes import lib
     from ext import ExtTest
+    from test_ctypes import lib
 
 
 def test_ext():

@@ -29,6 +29,33 @@ static auto &packedfunc_vector_add = Registry<PackedFunc>::Register("vector_add"
       }) (args[0], args[1]));
     });
 
+static auto &packedfunc_ext_new = Registry<PackedFunc>::Register("ext_new")
+    .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
+      ext::test* p = new ext::test;
+      std::cerr << "new ext::test " << p << std::endl;
+      rv->reset(p, false);
+    });
+
+static auto &packedfunc_ext_release = Registry<PackedFunc>::Register("ext_release")
+    .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
+      ext::test* p = args[0];
+      std::cerr << "release ext::test " << p << std::endl;
+      delete p;
+      rv->reset(0);
+    });
+
+static auto &packedfunc_ext_get = Registry<PackedFunc>::Register("ext_get")
+    .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
+      ext::test* p = args[0];
+      rv->reset(p->name);
+    });
+
+static auto &packedfunc_ext_transform = Registry<PackedFunc>::Register("ext_transform")
+    .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
+      ext::test* p = args[0];
+      p->name += "!";
+      rv->reset(p, false);
+    });
 
 static auto &packedfunc_test_all = Registry<PackedFunc>::Register("test_all")
     .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
@@ -86,12 +113,6 @@ int test_vector() {
 }
 
 int test_ext() {
-  static auto &packedfunc_hello = Registry<PackedFunc>::Register("ext_transform")
-      .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
-        ext::test* p = args[0];
-        p->name += "!";
-        rv->reset(p);
-      });
   ext::test t;
   ext::test* hello_result = Registry<PackedFunc>::Get("ext_transform")->operator()(&t);
   std::cout << "ext_transform: " << hello_result->name << std::endl;

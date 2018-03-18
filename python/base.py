@@ -13,6 +13,14 @@ CTI_EXPORT int CTIPackedFuncCall(const void* handle, int num_args, const unsigne
 """
 
 
+class classproperty(object):
+    def __init__(self, fget):
+        self.fget = fget
+
+    def __get__(self, owner_self, owner_cls):
+        return self.fget(owner_cls)
+
+
 packedtypecode = ctypes.c_uint
 packedfunc_handle = ctypes.c_void_p
 
@@ -47,9 +55,54 @@ class packedvalue_handle(ctypes.Union):
                 ("v_vec", ctypes.POINTER(packedvec_handle))]
 
 
-packedvec_handle._fields_ = [("data", ctypes.POINTER(packedvalue_handle)),
-                             ("count", ctypes.c_size_t),
-                             ("type_code", packedtypecode)]
+packedvec_handle._fields_ = [
+    ("data", ctypes.POINTER(packedvalue_handle)),
+    ("count", ctypes.c_size_t),
+    ("type_code", packedtypecode)
+]
+
+
+class ExtBaseCls:
+    def __init__(self, lib, handle):
+        self.lib = lib
+        self.handle = handle
+        self.is_py = False
+
+    @classmethod
+    def from_(cls, value):
+        if not isinstance(value, cls):
+            return "kUnknown", None
+        packed_value = packedvalue_handle()
+        packed_value.v_void_p = value.handle
+        return cls.ext_name, packed_value
+
+    @classproperty
+    def ext_name(cls):
+        raise NotImplementedError("You should use derived class")
+
+    @classproperty
+    def type_code(cls):
+        raise NotImplementedError("You should use derived class")
+
+    @classmethod
+    def _new(cls):
+        raise NotImplementedError("%s not support new" % cls.ext_name)
+
+    def _release(self):
+        raise NotImplementedError("%s not support new" % self.ext_name)
+
+    @classmethod
+    def new(cls):
+        t = cls._new()
+        t.is_py = True
+        return t
+
+    def release(self):
+        if self.is_py:
+            self._release()
+
+    def __del__(self):
+        self.release()
 
 
 class PackedArg:
@@ -73,11 +126,17 @@ class PackedArg:
         "kFunc": 5,
         "kVector": 6,
     }
+    ext_klass = {}
 
-    def __init__(self, value, type_code=None):
+    def __init__(self, lib, value, type_code=None):
         if type_code is None:
             tp, value = PackedArg.from_(value)
             type_code = PackedArg.from_typecode(tp)
+        elif not isinstance(value, packedvalue_handle):
+            raise ValueError("value should be packedvalue_handle")
+        elif type_code not in PackedArg.type_codes.values():
+            raise ValueError("type_code %s invalid" % type_code)
+        self.lib = lib
         self.type_code = type_code
         self.value = value
 
@@ -100,6 +159,11 @@ class PackedArg:
             tp, vec = PackedArg.make_vec(value)
             packed_value.v_vec = ctypes.pointer(vec)
             return tp, packed_value
+        else:
+            for _, ext_cls in sorted(PackedArg.ext_klass.items()):
+                if isinstance(value, ext_cls):
+                    return ext_cls.from_(value)
+        raise ValueError("unknown type of value")
 
     def to(self):
         type_code = self.type_code
@@ -112,13 +176,17 @@ class PackedArg:
         elif type_code == PackedArg.type_codes["kStr"]:
             return self.value.v_str.decode()
         elif type_code == PackedArg.type_codes["kFunc"]:
-            return PackedFunc(None, self.value.v_func)
+            return PackedFunc(self.lib, self.value.v_func)
         elif type_code == PackedArg.type_codes["kVector"]:
             ret = []
             vec = self.value.v_vec.contents
             for i in range(vec.count):
-                ret.append(PackedArg(vec.data[i], type_code=vec.type_code).to())
+                ret.append(PackedArg(self.lib, vec.data[i], type_code=vec.type_code).to())
             return ret
+        else:
+            for _, ext_cls in sorted(PackedArg.ext_klass.items()):
+                if type_code == ext_cls.type_code:
+                    return ext_cls(self.lib, self.value.v_void_p)
 
     def __repr__(self):
         return "<PackedArg %d %s>" % (self.type_code, self.to())
@@ -148,6 +216,15 @@ class PackedArg:
         packed_vec.data = data
         return ("kVector", type_code), packed_vec
 
+    @classmethod
+    def RegisterExt(cls, ext_cls):
+        type_code, ext_name = ext_cls.type_code, ext_cls.ext_name
+        if not isinstance(type_code, int) or type_code < 0:
+            raise ValueError("type_code %s should > 0" % type_code)
+        if type_code in cls.type_codes.values() or ext_name in cls.type_codes.keys():
+            raise ValueError("type_code %d or ext_name %s already registered" % type_code, ext_name)
+        cls.type_codes[ext_name] = type_code
+        cls.ext_klass[type_code] = ext_cls
 
 
 class PackedFunc:
@@ -209,7 +286,7 @@ class Lib:
 
     def PackedFuncCall(self, func_handle, *args):
         num_args = len(args)
-        packed_args = [PackedArg(x) for x in args]
+        packed_args = [PackedArg(self, x) for x in args]
         type_codes = (packedtypecode * num_args)()
         values = (packedvalue_handle * num_args)()
         for i, x in enumerate(packed_args):
@@ -218,5 +295,5 @@ class Lib:
         ret_type = packedtypecode()
         ret_val = packedvalue_handle()
         self.lib.CTIPackedFuncCall(func_handle, len(args), type_codes, values, ctypes.byref(ret_type), ctypes.byref(ret_val))
-        ret = PackedArg(ret_val, type_code=ret_type.value)
+        ret = PackedArg(self, ret_val, type_code=ret_type.value)
         return ret.to()

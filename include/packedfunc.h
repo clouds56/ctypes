@@ -32,10 +32,11 @@ struct is_ext {
   static constexpr bool value = _code >= kExtStart;
 };
 
-template <unsigned _code, unsigned _transform_code=_code>
+template <unsigned _code, unsigned _transform_code=_code, bool _copy_default=true>
 struct _TypeCode {
   static constexpr PackedType code() { return _code; }
   static constexpr PackedType transform_code() { return _transform_code; }
+  static constexpr bool copy() { return _copy_default; }
 };
 
 template <typename T, typename Enabled = void>
@@ -55,6 +56,22 @@ template <typename T> struct TypeCode<std::vector<T>> : _TypeCode<kVector, kVect
 
 template <typename T>
 struct is_ext_type : is_ext<TypeCode<T>::code()> {};
+
+template <typename T>
+struct Extension {
+  static constexpr ctypes::PackedType type_code = ctypes::PackedTypeCode::kUnknown;
+  static constexpr bool copy_ret = false;
+};
+
+template <typename T, typename = bool>
+constexpr bool Extension_copy = Extension<void>::copy_ret;
+
+template <typename T>
+constexpr bool Extension_copy<T, decltype(Extension<T>::copy_ret)> = Extension<T>::copy_ret;
+
+template <typename T>
+struct TypeCode<T, typename std::enable_if_t<is_ext<Extension<T>::type_code>::value>>
+    : _TypeCode<Extension<T>::type_code, kPtr, Extension_copy<T>> { };
 
 }
 
@@ -386,7 +403,7 @@ struct PackedFunc {
       return switch_to(PackedTypeCode::kVector, PackedValue{.v_vec = value_}, copy);
     }
     template <typename T, unsigned _type_code = PackedTypeCode::TypeCode<T>::code(), typename = std::enable_if_t<PackedTypeCode::is_ext<_type_code>::value> >
-    RetValue& reset(const T* value, bool copy=true) {
+    RetValue& reset(const T* value, bool copy=PackedTypeCode::TypeCode<T>::copy()) {
       if (copy) {
         p = Manager::make(value);
         value = reinterpret_cast<T*>(p.get());

@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 file(GLOB sources src/*.cc include/*.h)
 add_library(ctypes STATIC ${sources})
 target_include_directories(ctypes PUBLIC include)
+set_property(TARGET ctypes PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 file(GLOB test_sources samples/test*.cc samples/ext.h)
 

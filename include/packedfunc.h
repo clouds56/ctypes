@@ -263,8 +263,9 @@ struct PackedFunc {
       return r;
     };
 
-    template <typename T, unsigned _type_code = PackedTypeCode::TypeCode<T>::code(), typename = std::enable_if_t<PackedTypeCode::is_ext<_type_code>::value> >
+    template <typename T, typename = std::enable_if_t<PackedTypeCode::is_ext_type<T>::value> >
     operator T*() {
+      const PackedType _type_code = PackedTypeCode::TypeCode<T>::code();
       static_assert(PackedTypeCode::TypeCode<T>::transform_code() == PackedTypeCode::kPtr);
       CHECK_EQ(type_code(), _type_code);
       return reinterpret_cast<T*>(value().v_voidp);

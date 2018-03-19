@@ -162,15 +162,15 @@ impl PackedArg {
 }
 
 extern "C" {
-    fn CTIRegistryListNames(tag: *const c_char, ret_size: *mut c_int, ret_names: *mut*const*const c_char) -> c_int;
+    fn CTIRegistryListNames(tag: *const c_char, ret_size: *mut size_t, ret_names: *mut*const*const c_char) -> c_int;
     fn CTIRegistryGet(tag: *const c_char, name: *const c_char, handle: *mut FuncHandle) -> c_int;
-    fn CTIPackedFuncCall(name: FuncHandle, num_args: c_int,
+    fn CTIPackedFuncCall(name: FuncHandle, num_args: size_t,
                          type_codes: *const _PackedType, values: *const _PackedValue,
                          ret_type: *mut _PackedType, ret_val: *mut _PackedValue) -> c_int;
 }
 
 pub fn registry_list_names(tag: &str) -> Vec<String> {
-    let mut ret_size: c_int = 0;
+    let mut ret_size: size_t = 0;
     let mut ret_names: *const*const c_char = std::ptr::null();
     let mut ret = Vec::new();
     let _tag = CString::new(tag).unwrap();
@@ -196,7 +196,7 @@ pub fn registry_get(tag: &str, name: &str) -> PackedFunc {
 
 impl PackedFunc {
     pub fn call(&self, args: Vec<PackedArg>) -> PackedArg {
-        let num_args = args.len() as i32;
+        let num_args = args.len();
         let mut type_codes = Vec::new();
         let mut values = Vec::new();
         let mut ret_type: _PackedType = 0;
@@ -248,7 +248,6 @@ mod tests {
         let result: String = packed_call!(test_append_str, append_str, "append", "str");
         println!("test_append_str: {}", result);
         assert_eq!(result, "append str");
-
     }
 }
 

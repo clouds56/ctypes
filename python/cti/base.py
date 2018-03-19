@@ -260,17 +260,17 @@ class Lib:
     @staticmethod
     def _load_lib(libpath):
         """Load libary by searching possible path."""
-        from ctypes import c_int, c_char_p, c_void_p, POINTER
+        from ctypes import c_int, c_size_t, c_char_p, c_void_p, POINTER
         lib = ctypes.CDLL(libpath, ctypes.RTLD_GLOBAL)
         # DMatrix functions
         # lib.TVMGetLastError.restype = ctypes.c_char_p
-        lib.CTIRegistryListNames.argtypes = [c_char_p, POINTER(c_int), POINTER(POINTER(c_char_p))]
+        lib.CTIRegistryListNames.argtypes = [c_char_p, POINTER(c_size_t), POINTER(POINTER(c_char_p))]
         lib.CTIRegistryListNames.restype = c_int
 
         lib.CTIRegistryGet.argtypes = [c_char_p, c_char_p, POINTER(packedfunc_handle)]
         lib.CTIRegistryGet.restype = c_int
 
-        lib.CTIPackedFuncCall.argtypes = [packedfunc_handle, c_int,
+        lib.CTIPackedFuncCall.argtypes = [packedfunc_handle, c_size_t,
                                           POINTER(packedtypecode), POINTER(packedvalue_handle),
                                           POINTER(packedtypecode), POINTER(packedvalue_handle)]
         lib.CTIPackedFuncCall.restype = c_int
@@ -278,7 +278,7 @@ class Lib:
 
     def RegistryListNames(self, registry_name="PackedFunc"):
         ret_names = ctypes.POINTER(ctypes.c_char_p)()
-        ret_size = ctypes.c_int()
+        ret_size = ctypes.c_size_t()
         self.lib.CTIRegistryListNames(registry_name.encode(Lib.funcname_encoding), ctypes.byref(ret_size), ctypes.byref(ret_names))
         return [ret_names[i].decode(Lib.funcname_encoding) for i in range(ret_size.value)]
 
@@ -297,6 +297,6 @@ class Lib:
             values[i] = x.value
         ret_type = packedtypecode()
         ret_val = packedvalue_handle()
-        self.lib.CTIPackedFuncCall(func_handle, len(args), type_codes, values, ctypes.byref(ret_type), ctypes.byref(ret_val))
+        self.lib.CTIPackedFuncCall(func_handle, num_args, type_codes, values, ctypes.byref(ret_type), ctypes.byref(ret_val))
         ret = PackedArg(self, ret_val, type_code=ret_type.value)
         return ret.to()

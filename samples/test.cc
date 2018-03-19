@@ -25,7 +25,7 @@ static auto &packedfunc_vector_add = Registry<PackedFunc>::Register("vector_add"
     .set_body([](PackedFunc::Args args, PackedFunc::RetValue *rv) {
       rv->reset(([](std::vector<std::vector<int>> a, std::vector<int> b) -> std::vector<std::vector<int>> {
         int t = std::accumulate(b.begin(), b.end(), 0);
-        for(auto& x: a) for(auto& i: x){i += t;}; return a;
+        for(auto& x: a){for(auto& i: x){i += t;};} return a;
       }) (args[0], args[1]));
     });
 
@@ -115,6 +115,7 @@ int test_vector() {
 int test_ext() {
   ext::test* t = Registry<PackedFunc>::Get("ext_new")->operator()();
   ext::test* hello_result = Registry<PackedFunc>::Get("ext_transform")->operator()(t);
+  CHECK_EQ(t, hello_result);
   std::cout << "ext_transform: " << t->name << std::endl;
   Registry<PackedFunc>::Get("ext_release")->operator()(t);
   return 0;

@@ -12,7 +12,7 @@ namespace client {
 
 std::vector<std::string> ListNames(const std::string& tag) {
   const char** names;
-  int size;
+  size_t size;
   CHECK_CTI(CTIRegistryListNames(tag.c_str(), &size, &names));
   std::vector<std::string> ret;
   ret.reserve(size);
@@ -37,7 +37,7 @@ struct PackedFunc {
 
   template <typename... ArgTps>
   RetValue operator()(ArgTps&& ...args) {
-    const int c_num_args = sizeof...(ArgTps);
+    const size_t c_num_args = sizeof...(ArgTps);
     std::vector<ctypes::PackedFunc::Arg> cti_args{ ctypes::PackedFunc::Arg::from(std::forward<ArgTps>(args))... };
     std::vector<PackedType> type_codes;
     std::vector<PackedValue> values;
@@ -46,7 +46,7 @@ struct PackedFunc {
     std::transform(cti_args.begin(), cti_args.end(), std::back_inserter(type_codes), [](const auto& i){ return i.type_code(); });
     std::transform(cti_args.begin(), cti_args.end(), std::back_inserter(values), [](const auto& i){ return i.value(); });
 
-    RetValue ret;
+    RetValue ret{};
     CHECK_CTI(CTIPackedFuncCall(handle, c_num_args, static_cast<const unsigned*>(type_codes.data()), reinterpret_cast<const packedvalue_handle*>(values.data()),
         static_cast<unsigned*>(&ret.type_code), reinterpret_cast<packedvalue_handle*>(&ret.value)));
     return ret;
@@ -67,7 +67,7 @@ using namespace ctypes;
 static int test_packed() {
   auto names = client::ListNames("PackedFunc");
   std::cout << "client::ListNames: ";
-  for (auto i : names) {
+  for (const auto& i : names) {
     std::cout << i << ",";
   }
   std::cout << std::endl;

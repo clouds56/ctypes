@@ -116,6 +116,7 @@ packed_arg_type!(i64, Int64);
 packed_arg_type!(u64, UInt64);
 packed_arg_type!(f64, Float64);
 packed_arg_type!(CString, String);
+packed_arg_type!(PackedFunc, Func);
 
 impl<'a> From<&'a str> for PackedArg {
     #[inline]
@@ -142,7 +143,8 @@ impl PackedArg {
             &PackedArg::UInt64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i as i64 } },
             &PackedArg::Float64(i) => _PackedArg{ type_code: PackedType::Float64 as _PackedType, value: _PackedValue{ v_float64: i } },
             &PackedArg::String(ref i) => _PackedArg{ type_code: PackedType::Str as _PackedType, value: _PackedValue{ v_str: i.as_ptr() } },
-            _ => _PackedArg{ type_code: PackedType::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
+            &PackedArg::Func(ref i) => _PackedArg{ type_code: PackedType::Func as _PackedType, value: _PackedValue{ v_func: i.handle } },
+            _ => panic!()//_PackedArg{ type_code: PackedType::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
         }
     }
 }
@@ -153,7 +155,8 @@ impl PackedArg {
             PackedType::Int64 => PackedArg::Int64(value.v_int64),
             PackedType::Float64 => PackedArg::Float64(value.v_float64),
             PackedType::Str => PackedArg::String(CStr::from_ptr(value.v_str).to_owned()),
-            _ => PackedArg::Unknown,
+            PackedType::Func => PackedArg::Func(PackedFunc{ handle: value.v_func, name: String::from("") }),
+            _ => panic!()//PackedArg::Unknown,
         }
     }
 }
@@ -235,10 +238,15 @@ mod tests {
 
     #[test]
     fn it_appends() {
-        let hello = registry_get("PackedFunc", "append_str");
-        let result: String = packed_call!(hello, "hello", "world");
-        println!("append_str: {}", result);
-        assert_eq!(result, "hello world");
+        let append_str = registry_get("PackedFunc", "append_str");
+        let result_: String = packed_call!(append_str, "hello", "world");
+        println!("append_str: {}", result_);
+
+        let test_append_str = registry_get("PackedFunc", "test_append_str");
+        let result: String = packed_call!(test_append_str, append_str, "append", "str");
+        println!("test_append_str: {}", result);
+        assert_eq!(result, "append str");
+
     }
 }
 

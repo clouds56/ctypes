@@ -69,7 +69,7 @@ pub enum PackedArg {
     Int64(i64),
     UInt64(u64),
     Float64(f64),
-    String(String),
+    String(CString),
     Func(PackedFunc),
     Vec(Vec<PackedArg>),
 }
@@ -115,6 +115,24 @@ packed_arg_type!(i32, i64, Int64);
 packed_arg_type!(i64, Int64);
 packed_arg_type!(u64, UInt64);
 packed_arg_type!(f64, Float64);
+packed_arg_type!(CString, String);
+
+impl<'a> From<&'a str> for PackedArg {
+    #[inline]
+    fn from(value: &'a str) -> Self {
+        PackedArg::String(CString::new(value).unwrap())
+    }
+}
+
+impl Into<String> for PackedArg {
+    #[inline]
+    fn into(self) -> String {
+        match self {
+            PackedArg::String(value) => value.into_string().unwrap(),
+            _ => panic!()
+        }
+    }
+}
 
 impl PackedArg {
     #[inline]
@@ -123,6 +141,7 @@ impl PackedArg {
             &PackedArg::Int64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i } },
             &PackedArg::UInt64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i as i64 } },
             &PackedArg::Float64(i) => _PackedArg{ type_code: PackedType::Float64 as _PackedType, value: _PackedValue{ v_float64: i } },
+            &PackedArg::String(ref i) => _PackedArg{ type_code: PackedType::Str as _PackedType, value: _PackedValue{ v_str: i.as_ptr() } },
             _ => _PackedArg{ type_code: PackedType::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
         }
     }
@@ -133,6 +152,7 @@ impl PackedArg {
         match PackedType::from(type_code) {
             PackedType::Int64 => PackedArg::Int64(value.v_int64),
             PackedType::Float64 => PackedArg::Float64(value.v_float64),
+            PackedType::Str => PackedArg::String(CStr::from_ptr(value.v_str).to_owned()),
             _ => PackedArg::Unknown,
         }
     }
@@ -146,7 +166,7 @@ extern "C" {
                          ret_type: *mut _PackedType, ret_val: *mut _PackedValue) -> c_int;
 }
 
-pub fn registry_list_names(tag: String) -> Vec<String> {
+pub fn registry_list_names(tag: &str) -> Vec<String> {
     let mut ret_size: c_int = 0;
     let mut ret_names: *const*const c_char = std::ptr::null();
     let mut ret = Vec::new();
@@ -161,13 +181,13 @@ pub fn registry_list_names(tag: String) -> Vec<String> {
     ret
 }
 
-pub fn registry_get(tag: String, name: String) -> PackedFunc {
+pub fn registry_get(tag: &str, name: &str) -> PackedFunc {
     let _tag = CString::new(tag).unwrap();
-    let _name = CString::new(name.clone()).unwrap();
+    let _name = CString::new(name).unwrap();
     let mut handle: FuncHandle = std::ptr::null();
     unsafe {
         CTIRegistryGet(_tag.as_ptr(), _name.as_ptr(), &mut handle);
-        PackedFunc { name, handle }
+        PackedFunc { name: name.to_owned(), handle }
     }
 }
 
@@ -204,13 +224,21 @@ mod tests {
 
     #[test]
     fn it_works() {
-        println!("list names: {:?}", registry_list_names(String::from("PackedFunc")));
-        let hello = registry_get(String::from("PackedFunc"), String::from("hello"));
+        println!("list names: {:?}", registry_list_names("PackedFunc"));
+        let hello = registry_get("PackedFunc", "hello");
         println!("get func: {:?}", hello);
         println!("arg: {:?}", PackedArg::from(1.));
         let result: i64 = packed_call!(hello, 1, 2);
         println!("hello: 1+2={:?}", result);
         assert_eq!(result, 3);
+    }
+
+    #[test]
+    fn it_appends() {
+        let hello = registry_get("PackedFunc", "append_str");
+        let result: String = packed_call!(hello, "hello", "world");
+        println!("append_str: {}", result);
+        assert_eq!(result, "hello world");
     }
 }
 

@@ -1,0 +1,8 @@
+[package]
+name = "cti"
+version = "0.1.0"
+authors = ["Clouds Flowing <clouds.flowing@gmail.com>"]
+build = "build.rs"
+
+[dependencies]
+libc = "0.2.39"

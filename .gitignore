@@ -1,8 +1,15 @@
+# ide
 .vscode
 .idea
 
+# build
+cmake-*/
+build/
+
+# python
 __pycache__/
 *.pyc
 
-cmake-*/
-build/
+# rust
+rust/target
+rust/Cargo.lock

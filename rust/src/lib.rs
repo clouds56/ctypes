@@ -5,8 +5,8 @@ use std::slice;
 use std::fmt::Debug;
 use std::convert::{From, Into};
 
-pub type FuncHandle = *const c_void;
-pub type _PackedType = c_uint;
+type FuncHandle = *const c_void;
+type _PackedType = c_uint;
 
 pub enum PackedType {
     Unknown = 0,
@@ -24,16 +24,31 @@ impl Into<_PackedType> for PackedType {
     }
 }
 
+impl From<_PackedType> for PackedType {
+    fn from(type_code: _PackedType) -> Self {
+        match type_code {
+            i if i == (PackedType::Int64 as _PackedType) => PackedType::Int64,
+            i if i == (PackedType::Float64 as _PackedType) => PackedType::Float64,
+            i if i == (PackedType::Ptr as _PackedType) => PackedType::Ptr,
+            i if i == (PackedType::Str as _PackedType) => PackedType::Str,
+            i if i == (PackedType::Func as _PackedType) => PackedType::Func,
+            i if i == (PackedType::Vector as _PackedType) => PackedType::Vector,
+            _ => PackedType::Unknown,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Debug)]
-pub struct _PackedVec {
+struct _PackedVec {
     data: *const _PackedValue,
     size: size_t,
     type_code: _PackedType,
 }
 
 #[repr(C)]
-pub union _PackedValue {
+#[derive(Copy, Clone)]
+union _PackedValue {
     v_int64: int64_t,
     v_float64: c_double,
     v_ptr: *const c_void,
@@ -42,10 +57,21 @@ pub union _PackedValue {
     v_vec: *const _PackedVec,
 }
 
-#[derive(Debug)]
-pub struct _PackedArg {
+#[derive(Debug, Copy, Clone)]
+struct _PackedArg {
     type_code: _PackedType,
     value: _PackedValue,
+}
+
+#[derive(Debug)]
+pub enum PackedArg {
+    Unknown,
+    Int64(i64),
+    UInt64(u64),
+    Float64(f64),
+    String(String),
+    Func(PackedFunc),
+    Vec(Vec<PackedArg>),
 }
 
 #[derive(Debug)]
@@ -62,40 +88,53 @@ impl Debug for _PackedValue {
     }
 }
 
-
-impl _PackedArg {
-    pub fn check(&self, type_code: _PackedType) {
-        assert_eq!(type_code, self.type_code)
-    }
-}
-
 macro_rules! packed_arg_type {
-    ( $t:ty, $c:expr, $n:ident ) => {
-        impl From<$t> for _PackedArg {
+    ( $t:ty, $tt:ty, $n:ident ) => {
+        impl From<$t> for PackedArg {
             #[inline]
             fn from(value: $t) -> Self {
-                _PackedArg{ type_code: $c as _PackedType, value: _PackedValue{ $n: value } }
+                PackedArg::$n(value as $tt)
             }
         }
-        impl Into<$t> for _PackedArg {
+        impl Into<$t> for PackedArg {
             #[inline]
             fn into(self) -> $t {
-                self.check($c as _PackedType);
-                unsafe {
-                    self.value.$n
+                match self {
+                    PackedArg::$n(value) => value as $t,
+                    _ => panic!()
                 }
             }
         }
     };
+    ( $t:ty, $n:ident ) => {
+        packed_arg_type!($t, $t, $n);
+    };
 }
 
-packed_arg_type!(i64, PackedType::Int64, v_int64);
-packed_arg_type!(f64, PackedType::Float64, v_float64);
-packed_arg_type!(FuncHandle, PackedType::Func, v_func);
+packed_arg_type!(i32, i64, Int64);
+packed_arg_type!(i64, Int64);
+packed_arg_type!(u64, UInt64);
+packed_arg_type!(f64, Float64);
 
-impl _PackedArg {
-    pub fn from_raw(type_code: _PackedType, value: _PackedValue) -> Self {
-        _PackedArg { type_code, value }
+impl PackedArg {
+    #[inline]
+    unsafe fn to_raw(&self) -> _PackedArg {
+        match self {
+            &PackedArg::Int64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i } },
+            &PackedArg::UInt64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i as i64 } },
+            &PackedArg::Float64(i) => _PackedArg{ type_code: PackedType::Float64 as _PackedType, value: _PackedValue{ v_float64: i } },
+            _ => _PackedArg{ type_code: PackedType::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
+        }
+    }
+}
+
+impl PackedArg {
+    unsafe fn from_raw(type_code: _PackedType, value: _PackedValue) -> Self {
+        match PackedType::from(type_code) {
+            PackedType::Int64 => PackedArg::Int64(value.v_int64),
+            PackedType::Float64 => PackedArg::Float64(value.v_float64),
+            _ => PackedArg::Unknown,
+        }
     }
 }
 
@@ -133,21 +172,30 @@ pub fn registry_get(tag: String, name: String) -> PackedFunc {
 }
 
 impl PackedFunc {
-    fn call(&self, args: Vec<_PackedArg>) -> _PackedArg {
+    fn call(&self, args: Vec<PackedArg>) -> PackedArg {
         let num_args = args.len() as i32;
         let mut type_codes = Vec::new();
         let mut values = Vec::new();
-        for arg in args {
-            type_codes.push(arg.type_code);
-            values.push(arg.value);
-        }
         let mut ret_type: _PackedType = 0;
         let mut ret_val = _PackedValue { v_int64: 0 };
         unsafe {
+            for arg in args.iter() {
+                let _arg = arg.to_raw();
+                type_codes.push(_arg.type_code);
+                values.push(_arg.value);
+            }
             CTIPackedFuncCall(self.handle, num_args, type_codes.as_ptr(), values.as_ptr(), &mut ret_type, &mut ret_val);
+            PackedArg::from_raw(ret_type, ret_val)
         }
-        _PackedArg::from_raw(ret_type, ret_val)
     }
+}
+
+macro_rules! vec_packed_arg {
+    ($($x:expr),*) => (vec![$(PackedArg::from($x),)*])
+}
+
+macro_rules! packed_call {
+    ($f:expr, $($x:expr),*) => ($f.call(vec_packed_arg!($($x),*)).into())
 }
 
 #[cfg(test)]
@@ -159,8 +207,8 @@ mod tests {
         println!("list names: {:?}", registry_list_names(String::from("PackedFunc")));
         let hello = registry_get(String::from("PackedFunc"), String::from("hello"));
         println!("get func: {:?}", hello);
-        println!("arg: {:?}", _PackedArg::from(1.));
-        let result: i64 = hello.call(vec!(_PackedArg::from(1), _PackedArg::from(2))).into();
+        println!("arg: {:?}", PackedArg::from(1.));
+        let result: i64 = packed_call!(hello, 1, 2);
         println!("hello: 1+2={:?}", result);
         assert_eq!(result, 3);
     }

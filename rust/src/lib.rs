@@ -195,7 +195,7 @@ pub fn registry_get(tag: &str, name: &str) -> PackedFunc {
 }
 
 impl PackedFunc {
-    fn call(&self, args: Vec<PackedArg>) -> PackedArg {
+    pub fn call(&self, args: Vec<PackedArg>) -> PackedArg {
         let num_args = args.len() as i32;
         let mut type_codes = Vec::new();
         let mut values = Vec::new();
@@ -213,10 +213,12 @@ impl PackedFunc {
     }
 }
 
+#[macro_export]
 macro_rules! vec_packed_arg {
     ($($x:expr),*) => (vec![$(PackedArg::from($x),)*])
 }
 
+#[macro_export]
 macro_rules! packed_call {
     ($f:expr, $($x:expr),*) => ($f.call(vec_packed_arg!($($x),*)).into())
 }

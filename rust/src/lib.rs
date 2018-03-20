@@ -39,7 +39,7 @@ impl From<_PackedType> for PackedType {
 }
 
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 struct _PackedVec {
     data: *const _PackedValue,
     size: size_t,
@@ -49,8 +49,8 @@ struct _PackedVec {
 #[derive(Debug)]
 pub struct ManagedPackedVec {
     packed_vec: _PackedVec,
-    value: Vec<_PackedValue>,
-    managed: Vec<ManagedPackedVec>,
+    values: Vec<_PackedValue>,
+    managed: Vec<ManagedPackedArg>,
 }
 
 #[repr(C)]
@@ -99,6 +99,15 @@ impl Debug for _PackedValue {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         unsafe {
             write!(f, "PackedValue {{ v_ptr: {:?} }}", self.v_ptr)
+        }
+    }
+}
+
+impl Into<Vec<PackedArg>> for _PackedVec {
+    fn into(self) -> Vec<PackedArg> {
+        unsafe {
+            let s = slice::from_raw_parts(self.data, self.size);
+            s.iter().map(|&x| PackedArg::from_raw(self.type_code, x)).collect()
         }
     }
 }
@@ -181,6 +190,48 @@ impl Into<String> for ManagedPackedArg {
     }
 }
 
+impl<T> From<Vec<T>> for ManagedPackedArg where ManagedPackedArg: std::convert::From<T> {
+    #[inline]
+    fn from(value: Vec<T>) -> Self {
+        let mut managed = Vec::new();
+        for x in value {
+            managed.push(ManagedPackedArg::from(x));
+        }
+        let mut values = Vec::new();
+        let mut type_code = PackedType::Unknown as _PackedType;
+        for a in managed.iter() {
+            unsafe {
+                let aa = a.to_raw();
+                if type_code == PackedType::Unknown as _PackedType {
+                    type_code = aa.type_code;
+                } else if aa.type_code != type_code {
+                    panic!();
+                }
+                values.push(aa.value);
+            }
+        }
+        let packed_vec = _PackedVec{ data: values.as_ptr(), size: values.len(), type_code };
+        let vec = ManagedPackedVec{ packed_vec, values, managed };
+        ManagedPackedArg::Vec(vec)
+    }
+}
+
+impl<T> Into<Vec<T>> for PackedArg where PackedArg: std::convert::Into<T> {
+    #[inline]
+    fn into(self) -> Vec<T> {
+        match self {
+            PackedArg::Vec(value) => {
+                let mut ret = Vec::new();
+                for x in value {
+                    ret.push(x.into());
+                }
+                ret
+            },
+            _ => panic!()
+        }
+    }
+}
+
 impl PackedArg {
     #[inline]
     unsafe fn to_raw(&self) -> _PackedArg {
@@ -189,7 +240,7 @@ impl PackedArg {
             &PackedArg::UInt64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i as i64 } },
             &PackedArg::Float64(i) => _PackedArg{ type_code: PackedType::Float64 as _PackedType, value: _PackedValue{ v_float64: i } },
             &PackedArg::Func(ref i) => _PackedArg{ type_code: PackedType::Func as _PackedType, value: _PackedValue{ v_func: i.handle } },
-            _ => panic!()//_PackedArg{ type_code: PackedType::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
+            _ => _PackedArg{ type_code: PackedType::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
         }
     }
 }
@@ -208,11 +259,12 @@ impl ManagedPackedArg {
 impl PackedArg {
     #[inline]
     unsafe fn from_raw(type_code: _PackedType, value: _PackedValue) -> Self {
-        match PackedType::from(type_code) {
+        match type_code.into() {
             PackedType::Int64 => PackedArg::Int64(value.v_int64),
             PackedType::Float64 => PackedArg::Float64(value.v_float64),
             PackedType::Str => PackedArg::String(CStr::from_ptr(value.v_str).to_owned().into_string().unwrap()),
             PackedType::Func => PackedArg::Func(PackedFunc{ handle: value.v_func, name: String::from("") }),
+            PackedType::Vector => PackedArg::Vec((*value.v_vec).into()),
             _ => panic!()//PackedArg::Unknown,
         }
     }
@@ -305,6 +357,14 @@ mod tests {
         let result: String = packed_call!(test_append_str, append_str, "append", "str");
         println!("test_append_str: {}", result);
         assert_eq!(result, "append str");
+    }
+
+    #[test]
+    fn it_list() {
+        let vector_add = registry_get("PackedFunc", "vector_add");
+        let result: Vec<Vec<i32>> = packed_call!(vector_add, vec!(vec!(1,2,3), vec!(4)), vec!(1,2,3,4));
+        println!("vector_add: {:?}", result);
+        assert_eq!(result, vec!(vec!(11,12,13), vec!(14)));
     }
 }
 

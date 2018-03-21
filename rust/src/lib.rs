@@ -10,13 +10,18 @@ pub type HandleType = *const c_void;
 type _PackedType = c_uint;
 
 trait PackedType : From<_PackedType> + Into<_PackedType> { }
-pub trait ExtBase: Drop {
+pub trait PackedExt: Drop {
     const CODE: u32;
     fn from_raw(ptr: PackedArg) -> Self;
     fn new() -> Self;
     fn release(&mut self);
     fn is_owned(&self) -> bool;
     fn handle(&self) -> HandleType;
+}
+
+pub trait _PackedExt: Drop {
+    fn _new() -> HandleType;
+    fn _release(&self);
 }
 
 #[derive(Debug)]
@@ -247,7 +252,7 @@ impl<T> Into<Vec<T>> for PackedArg where PackedArg: std::convert::Into<T> {
     }
 }
 
-impl<'a, T: ExtBase> From<&'a T> for ManagedPackedArg {
+impl<'a, T: PackedExt> From<&'a T> for ManagedPackedArg {
     #[inline]
     fn from(value: &'a T) -> Self {
         ManagedPackedArg::Base(PackedArg::Ext(T::CODE, value.handle()))
@@ -377,6 +382,67 @@ macro_rules! vec_packed_arg {
 macro_rules! packed_call {
     ($f:expr) => (unsafe{ $f.call(vec!()) }.into());
     ($f:expr, $($x:expr),*) => (unsafe{ $f.call(vec_packed_arg!($($x),*)) }.into());
+}
+
+#[macro_export]
+macro_rules! registry_func {
+    ( $n:ident, $s:expr ) => {
+        static mut $n: PackedFunc = PackedFunc{ name: None, handle: std::ptr::null() };
+        static ONCE: std::sync::Once = std::sync::ONCE_INIT;
+        unsafe {
+            ONCE.call_once(|| $n = registry_get("PackedFunc", $s))
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_packed_ext {
+    ( $n:ident, $c:expr ) => {
+        impl PackedExt for $n {
+            const CODE: u32 = $c;
+
+            fn from_raw(ptr: PackedArg) -> Self {
+                ExtTest{ handle: ptr.into(), is_owned: false }
+            }
+
+            fn new() -> Self {
+                ExtTest{ handle: Self::_new(), is_owned: true }
+            }
+
+            fn release(&mut self) {
+                if self.is_owned {
+                    self._release();
+                    self.handle = std::ptr::null();
+                    self.is_owned = false;
+                }
+            }
+
+            fn is_owned(&self) -> bool { self.is_owned }
+            fn handle(&self) -> HandleType { self.handle }
+        }
+    };
+    ( $n:ident, new = $new:expr, release = $release:expr ) => {
+        impl _PackedExt for $n {
+            fn _new() -> HandleType {
+                registry_func!(EXT_NEW, $new);
+                packed_call!(EXT_NEW)
+            }
+
+            fn _release(&self) {
+                registry_func!(EXT_RELEASE, $release);
+                let () = packed_call!(EXT_RELEASE, self);
+            }
+        }
+        impl Drop for ExtTest {
+            fn drop(&mut self) {
+                self.release()
+            }
+        }
+    };
+    ( $n:ident, $c:expr, new = $new:expr, release = $release:expr ) => {
+        impl_packed_ext!($n, $c);
+        impl_packed_ext!($n, new = $new, release = $release );
+    }
 }
 
 #[cfg(test)]

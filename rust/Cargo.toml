@@ -6,3 +6,8 @@ build = "build.rs"
 
 [dependencies]
 libc = "0.2.39"
+
+[[bin]]
+path = "samples/ext.rs"
+name = "main"
+doc = false

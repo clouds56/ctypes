@@ -1,4 +1,5 @@
-use super::*;
+extern crate cti;
+use cti::*;
 
 macro_rules! registry_func {
     ( $n:ident, $s:expr ) => {
@@ -17,7 +18,7 @@ pub struct ExtTest {
 }
 
 impl ExtBase for ExtTest {
-    const CODE: _PackedType = 32;
+    const CODE: u32 = 32;
 
     fn from_raw(ptr: PackedArg) -> Self {
         ExtTest{ handle: ptr.into(), is_owned: false }
@@ -58,12 +59,10 @@ impl ExtTest {
     }
 }
 
-#[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn it_works() {
+    pub fn test_ext() {
         let mut ext_test = ExtTest::new();
         println!("{:?}", ext_test);
         println!("transform: {:?}", ext_test.transform());
@@ -71,4 +70,11 @@ mod tests {
         println!("name: {}", name);
         assert_eq!(name, "run!");
     }
+
+    #[test]
+    fn it_works() { test_ext() }
+}
+
+fn main() {
+    tests::test_ext()
 }

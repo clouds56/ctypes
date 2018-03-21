@@ -5,13 +5,13 @@ use std::slice;
 use std::fmt::Debug;
 use std::convert::{From, Into};
 
-type FuncHandle = *const c_void;
-type HandleType = *const c_void;
+pub type FuncHandle = *const c_void;
+pub type HandleType = *const c_void;
 type _PackedType = c_uint;
 
 trait PackedType : From<_PackedType> + Into<_PackedType> { }
 pub trait ExtBase: Drop {
-    const CODE: _PackedType;
+    const CODE: u32;
     fn from_raw(ptr: PackedArg) -> Self;
     fn new() -> Self;
     fn release(&mut self);
@@ -106,7 +106,7 @@ pub enum PackedArg {
 #[derive(Debug)]
 pub struct PackedFunc {
     pub name: Option<String>,
-    handle: FuncHandle,
+    pub handle: FuncHandle,
 }
 
 impl Debug for _PackedValue {
@@ -414,5 +414,3 @@ mod tests {
         assert_eq!(result, vec!(vec!(11,12,13), vec!(14)));
     }
 }
-
-pub mod ext;

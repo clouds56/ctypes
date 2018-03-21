@@ -6,9 +6,21 @@ use std::fmt::Debug;
 use std::convert::{From, Into};
 
 type FuncHandle = *const c_void;
+type HandleType = *const c_void;
 type _PackedType = c_uint;
 
-pub enum PackedType {
+trait PackedType : From<_PackedType> + Into<_PackedType> { }
+pub trait ExtBase: Drop {
+    const CODE: _PackedType;
+    fn from_raw(ptr: PackedArg) -> Self;
+    fn new() -> Self;
+    fn release(&mut self);
+    fn is_owned(&self) -> bool;
+    fn handle(&self) -> HandleType;
+}
+
+#[derive(Debug)]
+pub enum PackedTypeCode {
     Unknown = 0,
     Int64 = 1,
     Float64 = 2,
@@ -18,22 +30,23 @@ pub enum PackedType {
     Vector = 6,
 }
 
-impl Into<_PackedType> for PackedType {
+impl Into<_PackedType> for PackedTypeCode {
     fn into(self) -> _PackedType {
         self as _PackedType
     }
 }
 
-impl From<_PackedType> for PackedType {
+impl From<_PackedType> for PackedTypeCode {
     fn from(type_code: _PackedType) -> Self {
         match type_code {
-            i if i == (PackedType::Int64 as _PackedType) => PackedType::Int64,
-            i if i == (PackedType::Float64 as _PackedType) => PackedType::Float64,
-            i if i == (PackedType::Ptr as _PackedType) => PackedType::Ptr,
-            i if i == (PackedType::Str as _PackedType) => PackedType::Str,
-            i if i == (PackedType::Func as _PackedType) => PackedType::Func,
-            i if i == (PackedType::Vector as _PackedType) => PackedType::Vector,
-            _ => PackedType::Unknown,
+            i if i == (PackedTypeCode::Unknown as _PackedType) => PackedTypeCode::Unknown,
+            i if i == (PackedTypeCode::Int64 as _PackedType) => PackedTypeCode::Int64,
+            i if i == (PackedTypeCode::Float64 as _PackedType) => PackedTypeCode::Float64,
+            i if i == (PackedTypeCode::Ptr as _PackedType) => PackedTypeCode::Ptr,
+            i if i == (PackedTypeCode::Str as _PackedType) => PackedTypeCode::Str,
+            i if i == (PackedTypeCode::Func as _PackedType) => PackedTypeCode::Func,
+            i if i == (PackedTypeCode::Vector as _PackedType) => PackedTypeCode::Vector,
+            _ => PackedTypeCode::Ptr,
         }
     }
 }
@@ -83,14 +96,16 @@ pub enum PackedArg {
     Int64(i64),
     UInt64(u64),
     Float64(f64),
+    Ptr(*const c_void),
     String(String),
     Func(PackedFunc),
     Vec(Vec<PackedArg>),
+    Ext(c_uint, *const c_void),
 }
 
 #[derive(Debug)]
 pub struct PackedFunc {
-    pub name: String,
+    pub name: Option<String>,
     handle: FuncHandle,
 }
 
@@ -198,11 +213,11 @@ impl<T> From<Vec<T>> for ManagedPackedArg where ManagedPackedArg: std::convert::
             managed.push(ManagedPackedArg::from(x));
         }
         let mut values = Vec::new();
-        let mut type_code = PackedType::Unknown as _PackedType;
+        let mut type_code = PackedTypeCode::Unknown as _PackedType;
         for a in managed.iter() {
             unsafe {
                 let aa = a.to_raw();
-                if type_code == PackedType::Unknown as _PackedType {
+                if type_code == PackedTypeCode::Unknown as _PackedType {
                     type_code = aa.type_code;
                 } else if aa.type_code != type_code {
                     panic!();
@@ -232,15 +247,40 @@ impl<T> Into<Vec<T>> for PackedArg where PackedArg: std::convert::Into<T> {
     }
 }
 
+impl<'a, T: ExtBase> From<&'a T> for ManagedPackedArg {
+    #[inline]
+    fn from(value: &'a T) -> Self {
+        ManagedPackedArg::Base(PackedArg::Ext(T::CODE, value.handle()))
+    }
+}
+
+impl Into<HandleType> for PackedArg {
+    #[inline]
+    fn into(self) -> HandleType {
+        match self {
+            PackedArg::Ptr(value) => value as HandleType,
+            PackedArg::Ext(_, value) => value as HandleType,
+            _ => panic!(),
+        }
+    }
+}
+
+impl Into<()> for PackedArg {
+    #[inline]
+    fn into(self) { }
+}
+
 impl PackedArg {
     #[inline]
     unsafe fn to_raw(&self) -> _PackedArg {
         match self {
-            &PackedArg::Int64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i } },
-            &PackedArg::UInt64(i) => _PackedArg{ type_code: PackedType::Int64 as _PackedType, value: _PackedValue{ v_int64: i as i64 } },
-            &PackedArg::Float64(i) => _PackedArg{ type_code: PackedType::Float64 as _PackedType, value: _PackedValue{ v_float64: i } },
-            &PackedArg::Func(ref i) => _PackedArg{ type_code: PackedType::Func as _PackedType, value: _PackedValue{ v_func: i.handle } },
-            _ => _PackedArg{ type_code: PackedType::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
+            &PackedArg::Int64(i) => _PackedArg{ type_code: PackedTypeCode::Int64 as _PackedType, value: _PackedValue{ v_int64: i } },
+            &PackedArg::UInt64(i) => _PackedArg{ type_code: PackedTypeCode::Int64 as _PackedType, value: _PackedValue{ v_int64: i as i64 } },
+            &PackedArg::Float64(i) => _PackedArg{ type_code: PackedTypeCode::Float64 as _PackedType, value: _PackedValue{ v_float64: i } },
+            &PackedArg::Ptr(i) => _PackedArg{ type_code: PackedTypeCode::Ptr as _PackedType, value: _PackedValue{ v_ptr: i } },
+            &PackedArg::Func(ref i) => _PackedArg{ type_code: PackedTypeCode::Func as _PackedType, value: _PackedValue{ v_func: i.handle } },
+            &PackedArg::Ext(c, i) => _PackedArg{ type_code: c, value: _PackedValue{ v_ptr: i } },
+            _ => _PackedArg{ type_code: PackedTypeCode::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
         }
     }
 }
@@ -250,8 +290,8 @@ impl ManagedPackedArg {
     unsafe fn to_raw(&self) -> _PackedArg {
         match self {
             &ManagedPackedArg::Base(ref base) => base.to_raw(),
-            &ManagedPackedArg::String(ref i) => _PackedArg{ type_code: PackedType::Str as _PackedType, value: _PackedValue{ v_str: i.as_ptr() } },
-            &ManagedPackedArg::Vec(ref i) => _PackedArg{ type_code: PackedType::Vector as _PackedType, value: _PackedValue{ v_vec: &i.packed_vec } },
+            &ManagedPackedArg::String(ref i) => _PackedArg{ type_code: PackedTypeCode::Str as _PackedType, value: _PackedValue{ v_str: i.as_ptr() } },
+            &ManagedPackedArg::Vec(ref i) => _PackedArg{ type_code: PackedTypeCode::Vector as _PackedType, value: _PackedValue{ v_vec: &i.packed_vec } },
         }
     }
 }
@@ -260,12 +300,20 @@ impl PackedArg {
     #[inline]
     unsafe fn from_raw(type_code: _PackedType, value: _PackedValue) -> Self {
         match type_code.into() {
-            PackedType::Int64 => PackedArg::Int64(value.v_int64),
-            PackedType::Float64 => PackedArg::Float64(value.v_float64),
-            PackedType::Str => PackedArg::String(CStr::from_ptr(value.v_str).to_owned().into_string().unwrap()),
-            PackedType::Func => PackedArg::Func(PackedFunc{ handle: value.v_func, name: String::from("") }),
-            PackedType::Vector => PackedArg::Vec((*value.v_vec).into()),
-            _ => panic!()//PackedArg::Unknown,
+            PackedTypeCode::Int64 => PackedArg::Int64(value.v_int64),
+            PackedTypeCode::Float64 => PackedArg::Float64(value.v_float64),
+            PackedTypeCode::Str => PackedArg::String(CStr::from_ptr(value.v_str).to_owned().into_string().unwrap()),
+            PackedTypeCode::Func => PackedArg::Func(PackedFunc{ handle: value.v_func, name: None }),
+            PackedTypeCode::Vector => PackedArg::Vec((*value.v_vec).into()),
+            PackedTypeCode::Ptr => {
+                if type_code == PackedTypeCode::Ptr as _PackedType {
+                    PackedArg::Ptr(value.v_ptr)
+                } else {
+                    PackedArg::Ext(type_code, value.v_ptr)
+                }
+
+            },
+            x => panic!("type code {:?} unknown", x)//PackedArg::Unknown,
         }
     }
 }
@@ -299,26 +347,24 @@ pub fn registry_get(tag: &str, name: &str) -> PackedFunc {
     let mut handle: FuncHandle = std::ptr::null();
     unsafe {
         CTIRegistryGet(_tag.as_ptr(), _name.as_ptr(), &mut handle);
-        PackedFunc { name: name.to_owned(), handle }
+        PackedFunc { name: Some(String::from(name)), handle }
     }
 }
 
 impl PackedFunc {
-    pub fn call(&self, args: Vec<ManagedPackedArg>) -> PackedArg {
+    pub unsafe fn call(&self, args: Vec<ManagedPackedArg>) -> PackedArg {
         let num_args = args.len();
         let mut type_codes = Vec::new();
         let mut values = Vec::new();
         let mut ret_type: _PackedType = 0;
         let mut ret_val = _PackedValue { v_int64: 0 };
-        unsafe {
-            for arg in args.iter() {
-                let _arg = arg.to_raw();
-                type_codes.push(_arg.type_code);
-                values.push(_arg.value);
-            }
-            CTIPackedFuncCall(self.handle, num_args, type_codes.as_ptr(), values.as_ptr(), &mut ret_type, &mut ret_val);
-            PackedArg::from_raw(ret_type, ret_val)
+        for arg in args.iter() {
+            let _arg = arg.to_raw();
+            type_codes.push(_arg.type_code);
+            values.push(_arg.value);
         }
+        CTIPackedFuncCall(self.handle, num_args, type_codes.as_ptr(), values.as_ptr(), &mut ret_type, &mut ret_val);
+        PackedArg::from_raw(ret_type, ret_val)
     }
 }
 
@@ -329,7 +375,8 @@ macro_rules! vec_packed_arg {
 
 #[macro_export]
 macro_rules! packed_call {
-    ($f:expr, $($x:expr),*) => ($f.call(vec_packed_arg!($($x),*)).into())
+    ($f:expr) => (unsafe{ $f.call(vec!()) }.into());
+    ($f:expr, $($x:expr),*) => (unsafe{ $f.call(vec_packed_arg!($($x),*)) }.into());
 }
 
 #[cfg(test)]
@@ -368,3 +415,4 @@ mod tests {
     }
 }
 
+pub mod ext;

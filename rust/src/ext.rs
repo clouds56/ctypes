@@ -52,7 +52,7 @@ impl ExtTest {
         packed_call!(EXT_GET, self)
     }
 
-    pub fn transform(&self) -> Self {
+    pub fn transform(&mut self) -> Self {
         registry_func!(EXT_TRANSFORM, "ext_transform");
         Self::from_raw(packed_call!(EXT_TRANSFORM, self as &Self))
     }
@@ -64,10 +64,11 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let ext_test = ExtTest::new();
+        let mut ext_test = ExtTest::new();
         println!("{:?}", ext_test);
         println!("transform: {:?}", ext_test.transform());
-        println!("name: {:?}", ext_test.name());
-        assert_eq!(3, 3);
+        let name = ext_test.name();
+        println!("name: {}", name);
+        assert_eq!(name, "run!");
     }
 }

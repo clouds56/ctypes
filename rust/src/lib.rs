@@ -1,4 +1,7 @@
 extern crate libc;
+#[macro_use]
+extern crate shared_library;
+
 use libc::{c_schar as c_char, c_int, c_uint, int64_t, c_double, c_void, size_t};
 use std::ffi::{CStr, CString};
 use std::slice;
@@ -7,7 +10,7 @@ use std::convert::{From, Into};
 
 pub type FuncHandle = *const c_void;
 pub type HandleType = *const c_void;
-type _PackedType = c_uint;
+pub type _PackedType = c_uint;
 
 trait PackedType : From<_PackedType> + Into<_PackedType> { }
 pub trait PackedExt: Drop {
@@ -73,7 +76,7 @@ pub struct ManagedPackedVec {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-union _PackedValue {
+pub union _PackedValue {
     v_int64: int64_t,
     v_float64: c_double,
     v_ptr: *const c_void,
@@ -323,41 +326,41 @@ impl PackedArg {
     }
 }
 
-extern "C" {
-    fn CTIRegistryListNames(tag: *const c_char, ret_size: *mut size_t, ret_names: *mut*const*const c_char) -> c_int;
-    fn CTIRegistryGet(tag: *const c_char, name: *const c_char, handle: *mut FuncHandle) -> c_int;
+shared_library!(Lib,
+    fn CTIRegistryListNames(tag: *const c_char, ret_size: *mut size_t, ret_names: *mut*const*const c_char) -> c_int,
+    fn CTIRegistryGet(tag: *const c_char, name: *const c_char, handle: *mut FuncHandle) -> c_int,
     fn CTIPackedFuncCall(name: FuncHandle, num_args: size_t,
                          type_codes: *const _PackedType, values: *const _PackedValue,
-                         ret_type: *mut _PackedType, ret_val: *mut _PackedValue) -> c_int;
-}
+                         ret_type: *mut _PackedType, ret_val: *mut _PackedValue) -> c_int,
+);
 
-pub fn registry_list_names(tag: &str) -> Vec<String> {
-    let mut ret_size: size_t = 0;
-    let mut ret_names: *const*const c_char = std::ptr::null();
-    let mut ret = Vec::new();
-    let _tag = CString::new(tag).unwrap();
-    unsafe {
-        CTIRegistryListNames(_tag.as_ptr(), &mut ret_size, &mut ret_names);
-        let rn = slice::from_raw_parts(ret_names, ret_size as usize);
-        for n in rn.iter() {
-            ret.push(CStr::from_ptr(*n).to_str().unwrap().to_owned());
+impl Lib {
+    pub fn registry_list_names(&self, tag: &str) -> Vec<String> {
+        let mut ret_size: size_t = 0;
+        let mut ret_names: *const *const c_char = std::ptr::null();
+        let mut ret = Vec::new();
+        let _tag = CString::new(tag).unwrap();
+        unsafe {
+            (self.CTIRegistryListNames)(_tag.as_ptr(), &mut ret_size, &mut ret_names);
+            let rn = slice::from_raw_parts(ret_names, ret_size as usize);
+            for n in rn.iter() {
+                ret.push(CStr::from_ptr(*n).to_str().unwrap().to_owned());
+            }
+        }
+        ret
+    }
+
+    pub fn registry_get(&self, tag: &str, name: &str) -> PackedFunc {
+        let _tag = CString::new(tag).unwrap();
+        let _name = CString::new(name).unwrap();
+        let mut handle: FuncHandle = std::ptr::null();
+        unsafe {
+            (self.CTIRegistryGet)(_tag.as_ptr(), _name.as_ptr(), &mut handle);
+            PackedFunc { name: Some(String::from(name)), handle }
         }
     }
-    ret
-}
 
-pub fn registry_get(tag: &str, name: &str) -> PackedFunc {
-    let _tag = CString::new(tag).unwrap();
-    let _name = CString::new(name).unwrap();
-    let mut handle: FuncHandle = std::ptr::null();
-    unsafe {
-        CTIRegistryGet(_tag.as_ptr(), _name.as_ptr(), &mut handle);
-        PackedFunc { name: Some(String::from(name)), handle }
-    }
-}
-
-impl PackedFunc {
-    pub unsafe fn call(&self, args: Vec<ManagedPackedArg>) -> PackedArg {
+    pub unsafe fn func_call(&self, func: FuncHandle, args: Vec<ManagedPackedArg>) -> PackedArg {
         let num_args = args.len();
         let mut type_codes = Vec::new();
         let mut values = Vec::new();
@@ -368,8 +371,14 @@ impl PackedFunc {
             type_codes.push(_arg.type_code);
             values.push(_arg.value);
         }
-        CTIPackedFuncCall(self.handle, num_args, type_codes.as_ptr(), values.as_ptr(), &mut ret_type, &mut ret_val);
+        (self.CTIPackedFuncCall)(func, num_args, type_codes.as_ptr(), values.as_ptr(), &mut ret_type, &mut ret_val);
         PackedArg::from_raw(ret_type, ret_val)
+    }
+}
+
+impl PackedFunc {
+    pub unsafe fn call(&self, lib: &Lib, args: Vec<ManagedPackedArg>) -> PackedArg {
+        lib.func_call(self.handle, args)
     }
 }
 
@@ -380,8 +389,7 @@ macro_rules! vec_packed_arg {
 
 #[macro_export]
 macro_rules! packed_call {
-    ($f:expr) => (unsafe{ $f.call(vec!()) }.into());
-    ($f:expr, $($x:expr),*) => (unsafe{ $f.call(vec_packed_arg!($($x),*)) }.into());
+    ($lib:expr, $f:expr $(,$x:expr)*) => (unsafe{ $f.call($lib, vec_packed_arg!($($x),*)) }.into());
 }
 
 #[macro_export]
@@ -445,38 +453,4 @@ macro_rules! impl_packed_ext {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        println!("list names: {:?}", registry_list_names("PackedFunc"));
-        let hello = registry_get("PackedFunc", "hello");
-        println!("get func: {:?}", hello);
-        println!("arg: {:?}", PackedArg::from(1.));
-        let result: i64 = packed_call!(hello, 1, 2);
-        println!("hello: 1+2={:?}", result);
-        assert_eq!(result, 3);
-    }
-
-    #[test]
-    fn it_appends() {
-        let append_str = registry_get("PackedFunc", "append_str");
-        let result_: String = packed_call!(append_str, "hello", "world");
-        println!("append_str: {}", result_);
-
-        let test_append_str = registry_get("PackedFunc", "test_append_str");
-        let result: String = packed_call!(test_append_str, append_str, "append", "str");
-        println!("test_append_str: {}", result);
-        assert_eq!(result, "append str");
-    }
-
-    #[test]
-    fn it_list() {
-        let vector_add = registry_get("PackedFunc", "vector_add");
-        let result: Vec<Vec<i32>> = packed_call!(vector_add, vec!(vec!(1,2,3), vec!(4)), vec!(1,2,3,4));
-        println!("vector_add: {:?}", result);
-        assert_eq!(result, vec!(vec!(11,12,13), vec!(14)));
-    }
-}
+mod tests;

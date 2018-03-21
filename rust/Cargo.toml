@@ -6,6 +6,7 @@ build = "build.rs"
 
 [dependencies]
 libc = "0.2.39"
+shared_library = "0.1.8"
 
 [[bin]]
 path = "samples/ext.rs"

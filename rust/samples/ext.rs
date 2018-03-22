@@ -3,30 +3,39 @@ extern crate cti;
 use cti::*;
 
 #[derive(Debug)]
-pub struct ExtTest {
+pub struct ExtTest<'lib> {
     handle: HandleType,
     is_owned: bool,
+    lib: &'lib Lib,
 }
 
 impl_packed_ext!(ExtTest, 32, new="ext_new", release="ext_release");
 
-impl ExtTest {
+impl<'lib> ExtTest<'lib> {
     pub fn name(&self) -> String {
-        registry_func!(EXT_GET, "ext_get");
-        packed_call!(EXT_GET, self)
+        packed_call!(self.lib.registry_get("PackedFunc", "ext_get"), self)
     }
 
     pub fn transform(&mut self) -> Self {
-        registry_func!(EXT_TRANSFORM, "ext_transform");
-        Self::from_raw(packed_call!(EXT_TRANSFORM, self as &Self))
+        let f = self.lib.registry_get("PackedFunc", "ext_transform");
+        let handle: PackedArg = packed_call!(f, self as &Self);
+        Self::from_raw(self.lib, handle)
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    const LIB_NAME: &'static str = "../build/libtest_ctypes.dylib";
+    fn _find_lib() -> PathBuf {
+        PathBuf::from(LIB_NAME)
+    }
 
     pub fn test_ext() {
-        let mut ext_test = ExtTest::new();
+        let lib: Lib = Lib::open(_find_lib().as_ref()).unwrap();
+        let mut ext_test = ExtTest::new(&lib);
         println!("new_ext: {:?}", ext_test);
         println!("transform: {:?}", ext_test.transform());
         let name = ext_test.name();
@@ -39,5 +48,4 @@ mod tests {
 }
 
 fn main() {
-    tests::test_ext()
 }

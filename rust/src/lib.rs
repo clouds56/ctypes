@@ -407,12 +407,12 @@ macro_rules! packed_call {
 #[macro_export]
 macro_rules! impl_packed_ext {
     // TODO: wait for lifetime macro
-    ( $n:ty, $c:expr ) => {
+    ( __impl $n:ty, $c:ty; from_raw => $b:expr ) => {
+        impl<'lib> $c for $n { }
         impl<'lib> PackedExt<'lib> for $n {
-            const CODE: u32 = $c;
-
+            const CODE: u32 = Self::_CODE;
             fn from_raw(lib: &'lib Lib, handle: HandleType) -> Self {
-                ExtTest{ handle, is_owned: false, lib }
+                Self{ handle, is_owned: $b, lib }
             }
 
             fn is_owned(&self) -> bool { self.is_owned }
@@ -429,14 +429,11 @@ macro_rules! impl_packed_ext {
             }
         }
     };
-    ( $n:ty, new = $new:expr, release = $release:expr ) => {
+    ( __impl $n:ty; new => $new:expr, release => $release:expr ) => {
         impl<'lib> PackedManagedExt<'lib> for $n {
             fn new(lib: &'lib Lib) -> Self {
-                let mut _self = Self::_new(lib);
-                _self.is_owned = true;
-                _self
+                Self::_new(lib)
             }
-
             fn release(&mut self) {
                 if self.is_owned {
                     self._release();
@@ -460,10 +457,31 @@ macro_rules! impl_packed_ext {
             }
         }
     };
-    ( $n:ty, $c:expr, new = $new:expr, release = $release:expr ) => {
-        impl_packed_ext!($n, $c);
-        impl_packed_ext!($n, new = $new, release = $release );
-    }
+    ( __impl $n:ty, $c:ty ) => {
+        impl_packed_ext!(__impl $n, $c; from_raw => false);
+    };
+    ( __impl $n:ty, $c:ty; new => $new:expr, release => $release:expr ) => {
+        impl_packed_ext!(__impl $n, $c; from_raw => true);
+        impl_packed_ext!(__impl $n; new => $new, release => $release );
+    };
+    ( pub struct $n:ident, $c:ident) => {
+        #[derive(Debug, Copy, Clone)]
+        pub struct $n<'lib> {
+            handle: HandleType,
+            is_owned: bool,
+            lib: &'lib Lib,
+        }
+        impl_packed_ext!(__impl $n<'lib>, $c<'lib>);
+    };
+    ( pub managed struct $n:ident, $c:ident) => {
+        #[derive(Debug)]
+        pub struct $n<'lib> {
+            handle: HandleType,
+            is_owned: bool,
+            lib: &'lib Lib,
+        }
+        impl_packed_ext!(__impl $n<'lib>, $c<'lib>; new => $n::_NEW, release => $n::_RELEASE);
+    };
 }
 
 mod tests;

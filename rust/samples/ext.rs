@@ -2,22 +2,29 @@
 extern crate cti;
 use cti::*;
 
-#[derive(Debug)]
-pub struct ExtTest<'lib> {
-    handle: HandleType,
-    is_owned: bool,
-    lib: &'lib Lib,
+pub trait ExtTestType<'lib> : PackedExt<'lib> {
+    const _CODE: u32 = 32;
+    // TODO: block on default type
+    const _NEW: &'static str = "ext_new";
+    const _RELEASE: &'static str = "ext_release";
 }
 
-impl_packed_ext!(ExtTest<'lib>, 32, new="ext_new", release="ext_release");
+impl_packed_ext!(pub struct ExtTest, ExtTestType);
+impl_packed_ext!(pub managed struct ExtManagedTest, ExtTestType);
 
-impl<'lib> ExtTest<'lib> {
-    pub fn name(&self) -> String {
-        packed_call!(self.lib.registry_get("PackedFunc", "ext_get"), self)
+trait ExtTestBase<'lib> : ExtTestType<'lib> {
+    fn name(&self) -> String;
+    fn transform(&mut self) -> ExtTest<'lib>;
+}
+
+impl<'lib, T: ExtTestType<'lib>> ExtTestBase<'lib> for T {
+    fn name(&self) -> String {
+        let f: PackedFunc<'lib> = self.lib().registry_get("PackedFunc", "ext_get");
+        packed_call!(f, self)
     }
 
-    pub fn transform(&mut self) -> Self {
-        let f: PackedFunc<'lib> = self.lib.registry_get("PackedFunc", "ext_transform");
+    fn transform(&mut self) -> ExtTest<'lib> {
+        let f: PackedFunc<'lib> = self.lib().registry_get("PackedFunc", "ext_transform");
         packed_call!(f, self as &Self)
     }
 }
@@ -34,7 +41,7 @@ mod tests {
 
     pub fn test_ext() {
         let lib: Lib = Lib::open(_find_lib().as_ref()).unwrap();
-        let mut ext_test = ExtTest::new(&lib);
+        let mut ext_test = ExtManagedTest::new(&lib);
         println!("new_ext: {:?}", ext_test);
         println!("transform: {:?}", ext_test.transform());
         let name = ext_test.name();

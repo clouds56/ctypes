@@ -13,18 +13,21 @@ pub type HandleType = *const c_void;
 pub type _PackedType = c_uint;
 
 trait PackedType : From<_PackedType> + Into<_PackedType> { }
-pub trait PackedExt<'lib>: Drop {
+pub trait PackedExt<'lib> {
     const CODE: u32;
-    fn from_raw(ptr: PackedArg<'lib>) -> Self;
-    fn new(lib: &'lib Lib) -> Self;
-    fn release(&mut self);
+    fn from_raw(lib: &'lib Lib, handle: HandleType) -> Self;
     fn is_owned(&self) -> bool;
     fn handle(&self) -> HandleType;
     fn lib(&self) -> &'lib Lib;
 }
 
-pub trait _PackedExt: Drop {
-    fn _new(lib: &Lib) -> HandleType;
+pub trait PackedManagedExt<'lib>: PackedExt<'lib> + Drop {
+    fn new(lib: &'lib Lib) -> Self;
+    fn release(&mut self);
+}
+
+pub trait _PackedExt<'lib>: Drop {
+    fn _new(lib: &'lib Lib) -> Self;
     fn _release(&self);
 }
 
@@ -264,17 +267,6 @@ impl<'a, 'lib, T: PackedExt<'lib>> From<&'a T> for ManagedPackedArg<'lib> {
     }
 }
 
-impl<'lib> Into<HandleType> for PackedArg<'lib> {
-    #[inline]
-    fn into(self) -> HandleType {
-        match self {
-            PackedArg::Ptr(_, value) => value as HandleType,
-            PackedArg::Ext(_, _, value) => value as HandleType,
-            _ => panic!(),
-        }
-    }
-}
-
 impl<'lib> PackedArg<'lib> {
     #[inline]
     pub fn lib(&self) -> &'lib Lib {
@@ -419,13 +411,30 @@ macro_rules! impl_packed_ext {
         impl<'lib> PackedExt<'lib> for $n {
             const CODE: u32 = $c;
 
-            fn from_raw(ptr: PackedArg<'lib>) -> Self {
-                let lib = ptr.lib();
-                ExtTest{ handle: ptr.into(), is_owned: false, lib }
+            fn from_raw(lib: &'lib Lib, handle: HandleType) -> Self {
+                ExtTest{ handle, is_owned: false, lib }
             }
 
+            fn is_owned(&self) -> bool { self.is_owned }
+            fn handle(&self) -> HandleType { self.handle }
+            fn lib(&self) -> &'lib Lib { self.lib }
+        }
+        impl<'lib> From<PackedArg<'lib>> for $n {
+            #[inline]
+            fn from(value: PackedArg<'lib>) -> Self {
+                match value {
+                    PackedArg::Ext(lib, code, value) if code == Self::CODE => Self::from_raw(lib, value),
+                    _ => panic!(),
+                }
+            }
+        }
+    };
+    ( $n:ty, new = $new:expr, release = $release:expr ) => {
+        impl<'lib> PackedManagedExt<'lib> for $n {
             fn new(lib: &'lib Lib) -> Self {
-                ExtTest{ handle: Self::_new(lib), is_owned: true, lib }
+                let mut _self = Self::_new(lib);
+                _self.is_owned = true;
+                _self
             }
 
             fn release(&mut self) {
@@ -435,15 +444,9 @@ macro_rules! impl_packed_ext {
                     self.is_owned = false;
                 }
             }
-
-            fn is_owned(&self) -> bool { self.is_owned }
-            fn handle(&self) -> HandleType { self.handle }
-            fn lib(&self) -> &'lib Lib { self.lib }
         }
-    };
-    ( $n:ty, new = $new:expr, release = $release:expr ) => {
-        impl<'lib> _PackedExt for $n {
-            fn _new(lib: &Lib) -> HandleType {
+        impl<'lib> _PackedExt<'lib> for $n {
+            fn _new(lib: &'lib Lib) -> Self {
                 packed_call!(lib.registry_get("PackedFunc", $new))
             }
 

@@ -22,8 +22,8 @@ pub trait PackedExt<'lib>: Drop {
     fn handle(&self) -> HandleType;
 }
 
-pub trait _PackedExt<'lib>: Drop {
-    fn _new(lib: &'lib Lib) -> HandleType;
+pub trait _PackedExt: Drop {
+    fn _new(lib: &Lib) -> HandleType;
     fn _release(&self);
 }
 
@@ -401,8 +401,8 @@ macro_rules! packed_call {
 
 #[macro_export]
 macro_rules! impl_packed_ext {
-    ( $n:ident, $c:expr ) => {
-        impl<'lib> PackedExt<'lib> for $n<'lib> {
+    ( $n:ty, $c:expr ) => {
+        impl<'lib> PackedExt<'lib> for $n {
             const CODE: u32 = $c;
 
             fn from_raw(lib: &'lib Lib, ptr: PackedArg) -> Self {
@@ -425,9 +425,9 @@ macro_rules! impl_packed_ext {
             fn handle(&self) -> HandleType { self.handle }
         }
     };
-    ( $n:ident, new = $new:expr, release = $release:expr ) => {
-        impl<'lib> _PackedExt<'lib> for $n<'lib> {
-            fn _new(lib: &'lib Lib) -> HandleType {
+    ( $n:ty, new = $new:expr, release = $release:expr ) => {
+        impl<'lib> _PackedExt for $n {
+            fn _new(lib: &Lib) -> HandleType {
                 packed_call!(lib.registry_get("PackedFunc", $new))
             }
 
@@ -435,13 +435,13 @@ macro_rules! impl_packed_ext {
                 let () = packed_call!(self.lib.registry_get("PackedFunc", $release), self);
             }
         }
-        impl<'lib> Drop for ExtTest<'lib> {
+        impl<'lib> Drop for $n {
             fn drop(&mut self) {
                 self.release()
             }
         }
     };
-    ( $n:ident, $c:expr, new = $new:expr, release = $release:expr ) => {
+    ( $n:ty, $c:expr, new = $new:expr, release = $release:expr ) => {
         impl_packed_ext!($n, $c);
         impl_packed_ext!($n, new = $new, release = $release );
     }

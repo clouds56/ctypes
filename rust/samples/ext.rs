@@ -9,7 +9,7 @@ pub struct ExtTest<'lib> {
     lib: &'lib Lib,
 }
 
-impl_packed_ext!(ExtTest, 32, new="ext_new", release="ext_release");
+impl_packed_ext!(ExtTest<'lib>, 32, new="ext_new", release="ext_release");
 
 impl<'lib> ExtTest<'lib> {
     pub fn name(&self) -> String {

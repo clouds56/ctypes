@@ -15,11 +15,12 @@ pub type _PackedType = c_uint;
 trait PackedType : From<_PackedType> + Into<_PackedType> { }
 pub trait PackedExt<'lib>: Drop {
     const CODE: u32;
-    fn from_raw(lib: &'lib Lib, ptr: PackedArg) -> Self;
+    fn from_raw(ptr: PackedArg<'lib>) -> Self;
     fn new(lib: &'lib Lib) -> Self;
     fn release(&mut self);
     fn is_owned(&self) -> bool;
     fn handle(&self) -> HandleType;
+    fn lib(&self) -> &'lib Lib;
 }
 
 pub trait _PackedExt: Drop {
@@ -104,11 +105,11 @@ pub enum PackedArg<'lib> {
     Int64(i64),
     UInt64(u64),
     Float64(f64),
-    Ptr(*const c_void),
     String(String),
+    Ptr(&'lib Lib, *const c_void),
     Func(PackedFunc<'lib>),
     Vec(Vec<PackedArg<'lib>>),
-    Ext(c_uint, *const c_void),
+    Ext(&'lib Lib, c_uint, *const c_void),
 }
 
 #[derive(Debug)]
@@ -256,10 +257,10 @@ impl<'lib, T> Into<Vec<T>> for PackedArg<'lib> where PackedArg<'lib>: std::conve
     }
 }
 
-impl<'a, 'lib, T: PackedExt<'a>> From<&'a T> for ManagedPackedArg<'lib> {
+impl<'a, 'lib, T: PackedExt<'lib>> From<&'a T> for ManagedPackedArg<'lib> {
     #[inline]
     fn from(value: &'a T) -> Self {
-        ManagedPackedArg::Base(PackedArg::Ext(T::CODE, value.handle()))
+        ManagedPackedArg::Base(PackedArg::Ext(value.lib(),T::CODE, value.handle()))
     }
 }
 
@@ -267,8 +268,20 @@ impl<'lib> Into<HandleType> for PackedArg<'lib> {
     #[inline]
     fn into(self) -> HandleType {
         match self {
-            PackedArg::Ptr(value) => value as HandleType,
-            PackedArg::Ext(_, value) => value as HandleType,
+            PackedArg::Ptr(_, value) => value as HandleType,
+            PackedArg::Ext(_, _, value) => value as HandleType,
+            _ => panic!(),
+        }
+    }
+}
+
+impl<'lib> PackedArg<'lib> {
+    #[inline]
+    pub fn lib(&self) -> &'lib Lib {
+        match self {
+            &PackedArg::Func(ref f) => f.lib,
+            &PackedArg::Ptr(lib, _) => lib,
+            &PackedArg::Ext(lib, _, _) => lib,
             _ => panic!(),
         }
     }
@@ -286,9 +299,9 @@ impl<'lib> PackedArg<'lib> {
             &PackedArg::Int64(i) => _PackedArg{ type_code: PackedTypeCode::Int64 as _PackedType, value: _PackedValue{ v_int64: i } },
             &PackedArg::UInt64(i) => _PackedArg{ type_code: PackedTypeCode::Int64 as _PackedType, value: _PackedValue{ v_int64: i as i64 } },
             &PackedArg::Float64(i) => _PackedArg{ type_code: PackedTypeCode::Float64 as _PackedType, value: _PackedValue{ v_float64: i } },
-            &PackedArg::Ptr(i) => _PackedArg{ type_code: PackedTypeCode::Ptr as _PackedType, value: _PackedValue{ v_ptr: i } },
+            &PackedArg::Ptr(_, i) => _PackedArg{ type_code: PackedTypeCode::Ptr as _PackedType, value: _PackedValue{ v_ptr: i } },
             &PackedArg::Func(ref i) => _PackedArg{ type_code: PackedTypeCode::Func as _PackedType, value: _PackedValue{ v_func: i.handle } },
-            &PackedArg::Ext(c, i) => _PackedArg{ type_code: c, value: _PackedValue{ v_ptr: i } },
+            &PackedArg::Ext(_, c, i) => _PackedArg{ type_code: c, value: _PackedValue{ v_ptr: i } },
             _ => _PackedArg{ type_code: PackedTypeCode::Unknown as _PackedType, value: _PackedValue{ v_int64: 0 } }
         }
     }
@@ -316,9 +329,9 @@ impl<'lib> PackedArg<'lib> {
             PackedTypeCode::Vector => PackedArg::Vec((*value.v_vec).into_vec(lib)),
             PackedTypeCode::Ptr => {
                 if type_code == PackedTypeCode::Ptr as _PackedType {
-                    PackedArg::Ptr(value.v_ptr)
+                    PackedArg::Ptr(lib, value.v_ptr)
                 } else {
-                    PackedArg::Ext(type_code, value.v_ptr)
+                    PackedArg::Ext(lib, type_code, value.v_ptr)
                 }
 
             },
@@ -357,8 +370,8 @@ impl Lib {
         let mut handle: FuncHandle = std::ptr::null();
         unsafe {
             (self.CTIRegistryGet)(_tag.as_ptr(), _name.as_ptr(), &mut handle);
-            PackedFunc { name: Some(String::from(name)), handle, lib: &self }
         }
+        PackedFunc { name: Some(String::from(name)), handle, lib: self }
     }
 
     pub unsafe fn func_call(&self, func: FuncHandle, args: Vec<ManagedPackedArg>) -> PackedArg {
@@ -378,7 +391,7 @@ impl Lib {
 }
 
 impl<'lib> PackedFunc<'lib> {
-    pub unsafe fn call(&self, args: Vec<ManagedPackedArg>) -> PackedArg {
+    pub unsafe fn call(&self, args: Vec<ManagedPackedArg<'lib>>) -> PackedArg<'lib> {
         self.lib.func_call(self.handle, args)
     }
 }
@@ -401,11 +414,13 @@ macro_rules! packed_call {
 
 #[macro_export]
 macro_rules! impl_packed_ext {
+    // TODO: wait for lifetime macro
     ( $n:ty, $c:expr ) => {
         impl<'lib> PackedExt<'lib> for $n {
             const CODE: u32 = $c;
 
-            fn from_raw(lib: &'lib Lib, ptr: PackedArg) -> Self {
+            fn from_raw(ptr: PackedArg<'lib>) -> Self {
+                let lib = ptr.lib();
                 ExtTest{ handle: ptr.into(), is_owned: false, lib }
             }
 
@@ -423,6 +438,7 @@ macro_rules! impl_packed_ext {
 
             fn is_owned(&self) -> bool { self.is_owned }
             fn handle(&self) -> HandleType { self.handle }
+            fn lib(&self) -> &'lib Lib { self.lib }
         }
     };
     ( $n:ty, new = $new:expr, release = $release:expr ) => {

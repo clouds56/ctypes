@@ -17,9 +17,9 @@ impl<'lib> ExtTest<'lib> {
     }
 
     pub fn transform(&mut self) -> Self {
-        let f = self.lib.registry_get("PackedFunc", "ext_transform");
+        let f: PackedFunc<'lib> = self.lib.registry_get("PackedFunc", "ext_transform");
         let handle: PackedArg = packed_call!(f, self as &Self);
-        Self::from_raw(self.lib, handle)
+        Self::from_raw(handle)
     }
 }
 

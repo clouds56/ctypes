@@ -12,7 +12,14 @@ pub trait ExtTestType<'lib> : PackedExt<'lib> {
 impl_packed_ext!(pub struct ExtTest, ExtTestType);
 impl_packed_ext!(pub managed struct ExtManagedTest, ExtTestType);
 
-trait ExtTestBase<'lib> : ExtTestType<'lib> {
+#[derive(Debug)]
+pub struct ExtTestProxy<'lib, T> where T: ExtTestBase<'lib> {
+    content: T,
+    count: u32,
+    _phantom: std::marker::PhantomData<&'lib bool>,
+}
+
+pub trait ExtTestBase<'lib> : PackedExt<'lib> {
     fn name(&self) -> String;
     fn transform(&mut self) -> ExtTest<'lib>;
 }
@@ -41,12 +48,16 @@ mod tests {
 
     pub fn test_ext() {
         let lib: Lib = Lib::open(_find_lib().as_ref()).unwrap();
-        let mut ext_test = ExtManagedTest::new(&lib);
+        let _ext_test = ExtManagedTest::new(&lib);
+        let mut ext_test = ExtTestProxy{ content: _ext_test, count: 2, _phantom: std::marker::PhantomData };
         println!("new_ext: {:?}", ext_test);
-        println!("transform: {:?}", ext_test.transform());
-        let name = ext_test.name();
+        println!("transform: {:?}",
+                 (0..ext_test.count).fold(
+                     ext_test.content.transform(),
+                     |mut t,_| t.transform()));
+        let name = ext_test.content.name();
         println!("name: {}", name);
-        assert_eq!(name, "run!");
+        assert_eq!(name, "run!!!");
     }
 
     #[test]

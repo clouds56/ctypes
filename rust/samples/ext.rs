@@ -9,8 +9,9 @@ pub trait ExtTestType<'lib> : PackedExt<'lib> {
     const _RELEASE: &'static str = "ext_release";
 }
 
-impl_packed_ext!(pub struct ExtTest, ExtTestType);
-impl_packed_ext!(pub managed struct ExtManagedTest, ExtTestType);
+impl_packed_ext!(pub struct ExtTest : ExtTestType);
+impl_packed_ext!(pub managed struct ExtManagedTest : ExtTestType);
+impl_packed_ext!(impl From<ExtManagedTest> for ExtTest);
 
 #[derive(Debug)]
 pub struct ExtTestProxy<'lib, T> where T: ExtTestBase<'lib> {
@@ -49,15 +50,15 @@ mod tests {
     pub fn test_ext() {
         let lib: Lib = Lib::open(_find_lib().as_ref()).unwrap();
         let _ext_test = ExtManagedTest::new(&lib);
-        let mut ext_test = ExtTestProxy{ content: _ext_test, count: 2, _phantom: std::marker::PhantomData };
+        let ext_test = ExtTestProxy{ content: _ext_test, count: 2, _phantom: std::marker::PhantomData };
         println!("new_ext: {:?}", ext_test);
         println!("transform: {:?}",
                  (0..ext_test.count).fold(
-                     ext_test.content.transform(),
+                     ExtTest::from(&ext_test.content),
                      |mut t,_| t.transform()));
         let name = ext_test.content.name();
         println!("name: {}", name);
-        assert_eq!(name, "run!!!");
+        assert_eq!(name, "run!!");
     }
 
     #[test]

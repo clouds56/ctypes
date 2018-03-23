@@ -464,7 +464,7 @@ macro_rules! impl_packed_ext {
         impl_packed_ext!(__impl $n, $c; from_raw => true);
         impl_packed_ext!(__impl $n; new => $new, release => $release );
     };
-    ( pub struct $n:ident, $c:ident) => {
+    ( pub struct $n:ident : $c:ident) => {
         #[derive(Debug, Copy, Clone)]
         pub struct $n<'lib> {
             handle: HandleType,
@@ -473,7 +473,7 @@ macro_rules! impl_packed_ext {
         }
         impl_packed_ext!(__impl $n<'lib>, $c<'lib>);
     };
-    ( pub managed struct $n:ident, $c:ident) => {
+    ( pub managed struct $n:ident : $c:ident) => {
         #[derive(Debug)]
         pub struct $n<'lib> {
             handle: HandleType,
@@ -482,6 +482,14 @@ macro_rules! impl_packed_ext {
         }
         impl_packed_ext!(__impl $n<'lib>, $c<'lib>; new => $n::_NEW, release => $n::_RELEASE);
     };
+    (impl From<$m:ident> for $n:ident) => {
+        // TODO: should reference 'lib here?
+        impl<'lib> From<&'lib $m<'lib>> for $n<'lib> {
+            fn from(value: &'lib $m<'lib>) -> Self {
+                Self{ lib: value.lib, is_owned: false, handle: value.handle }
+            }
+        }
+    }
 }
 
 mod tests;

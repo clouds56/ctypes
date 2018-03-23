@@ -42,9 +42,10 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const LIB_NAME: &'static str = "../build/libtest_ctypes.dylib";
+    const LIB_PATH: &'static str = "../build/";
+    const LIB_NAME: &'static str = "test_ctypes";
     fn _find_lib() -> PathBuf {
-        PathBuf::from(LIB_NAME)
+        Lib::find_lib(LIB_PATH, LIB_NAME).unwrap()
     }
 
     pub fn test_ext() {

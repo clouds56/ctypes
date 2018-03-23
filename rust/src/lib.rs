@@ -7,6 +7,7 @@ use std::ffi::{CStr, CString};
 use std::slice;
 use std::fmt::Debug;
 use std::convert::{From, Into};
+use std::path::PathBuf;
 
 pub type FuncHandle = *const c_void;
 pub type HandleType = *const c_void;
@@ -341,6 +342,18 @@ shared_library!(Lib,
 );
 
 impl Lib {
+    pub fn find_lib(path: &str, filename: &str) -> Option<PathBuf> {
+        let ext = vec!(("lib", ".so"), ("lib", ".dylib"), ("", ".dll"));
+        for &(pre, post) in ext.iter() {
+            let mut path = PathBuf::from(path);
+            let file = format!("{}{}{}", pre, filename, post);
+            path.push(file);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+        None
+    }
     pub fn registry_list_names(&self, tag: &str) -> Vec<String> {
         let mut ret_size: size_t = 0;
         let mut ret_names: *const *const c_char = std::ptr::null();
